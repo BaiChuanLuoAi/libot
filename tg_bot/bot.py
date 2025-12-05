@@ -297,17 +297,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
     
     welcome_message = (
-        f"🔥 Welcome {user.first_name}!\n\n"
+        f"🔥 **Welcome to Lili AI, {user.first_name}!**\n\n"
         f"{referral_bonus_message}"
-        f"💎 You have **{user_data['credits']} free credits** to start!\n\n"
-        f"🎲 **/roll** - Spin for your waifu (1 credit)\n"
-        f"✅ **/checkin** - Daily bonus (3 credits)\n"
-        f"💰 **/balance** - Check your credits\n"
-        f"💳 **/buy** - Get more credits\n"
-        f"👥 **/invite** - Invite friends, earn credits\n\n"
-        f"🎥 After each roll, you can **Make it Move** for {COST_VIDEO} credits!\n\n"
-        f"💡 _Tip: Check in daily for 5 days = 1 free video!_\n"
-        f"_Every roll is unique - millions of combinations!_"
+        f"💎 You start with **{user_data['credits']} FREE credits**!\n\n"
+        f"🎲 **/roll** - Get your AI waifu (1 credit)\n"
+        f"🎥 **Animate her** - Make it move! ({COST_VIDEO} credits)\n\n"
+        f"🆓 **FREE Credits:**\n"
+        f"• **/checkin** - Daily +{CHECKIN_REWARD} credits\n"
+        f"• **/invite** - +{REFERRAL_REWARD_INVITER} credits per friend\n\n"
+        f"💳 **/buy** - Instant recharge ($4.99+)\n"
+        f"💰 **/balance** - Check your status\n\n"
+        f"💡 _Pro tip: Check in for 5 days = 1 FREE video!_\n"
+        f"_Millions of unique waifus waiting..._"
     )
     
     await update.message.reply_text(welcome_message, parse_mode='Markdown')
@@ -376,9 +377,13 @@ async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     credits = db.get_credits(user.id)
     if credits < COST_IMAGE:
         await update.message.reply_text(
-            f"💔 Out of credits!\n\n"
-            f"You need {COST_IMAGE} credit but only have {credits}.\n\n"
-            f"💳 Use /buy to get more credits and keep rolling!"
+            f"💔 **Out of credits!**\n\n"
+            f"You need **{COST_IMAGE} credit** but only have **{credits}**.\n\n"
+            f"✅ /checkin - Get {CHECKIN_REWARD} free credits daily\n"
+            f"👥 /invite - Get {REFERRAL_REWARD_INVITER} credits per friend\n"
+            f"💳 /buy - Instant recharge from $4.99\n\n"
+            f"_Don't stop now! Your waifu is waiting..._",
+            parse_mode='Markdown'
         )
         return
     
@@ -426,11 +431,21 @@ async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
         remaining_credits = db.get_credits(user.id)
         
         # Send image with button
-        caption = (
-            f"🎊 **JACKPOT!** Your waifu is here!\n\n"
-            f"💎 Credits: {remaining_credits}\n\n"
-            f"🎥 Want to see her move? Click below! ⬇️"
-        )
+        can_afford_video = remaining_credits >= COST_VIDEO
+        
+        if can_afford_video:
+            caption = (
+                f"🎊 **JACKPOT!** Your exclusive waifu is here!\n\n"
+                f"💎 Credits: {remaining_credits}\n\n"
+                f"🔥 **Want to see her MOVE?** Click below! ⬇️\n"
+                f"_4K Animation • 3 seconds • Worth it!_"
+            )
+        else:
+            caption = (
+                f"🎊 **JACKPOT!** Your exclusive waifu is here!\n\n"
+                f"💎 Credits: {remaining_credits}\n\n"
+                f"🎥 _Want animation? Check in daily or /buy credits!_"
+            )
         
         try:
             # Download the image first
@@ -531,11 +546,23 @@ async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Get remaining credits
         remaining_credits = db.get_credits(user.id)
         
-        caption = (
-            f"🔥 **SHE'S ALIVE!**\n\n"
-            f"💎 Credits: {remaining_credits}\n\n"
-            f"🎲 Roll again? Use /roll"
-        )
+        # Calculate what they can still do
+        videos_left = remaining_credits // COST_VIDEO
+        
+        caption = f"🔥 **SHE'S ALIVE!**\n\n"
+        
+        if videos_left > 0:
+            caption += f"💎 {remaining_credits} Credits left ({videos_left} more video{'s' if videos_left > 1 else ''})\n\n"
+            caption += f"🎲 Roll again? Use /roll"
+        elif remaining_credits >= COST_IMAGE:
+            caption += f"💎 {remaining_credits} Credits left\n\n"
+            caption += f"🎲 Roll more waifus! Use /roll\n"
+            caption += f"💳 Need more videos? /buy"
+        else:
+            caption += f"💎 {remaining_credits} Credits left\n\n"
+            caption += f"✅ /checkin - Daily free credits\n"
+            caption += f"👥 /invite - Invite 3 friends = 1 FREE video\n"
+            caption += f"💳 /buy - Get more (from $4.99)"
         
         try:
             # Download the video first
@@ -588,18 +615,27 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     total_earned = invited_count * REFERRAL_REWARD_INVITER
     
+    # Calculate progress to free video
+    credits_needed_for_video = COST_VIDEO
+    invites_needed = 3  # 3 invites × 10 credits = 30 credits = 1 video
+    remaining_invites = max(0, invites_needed - invited_count)
+    
     message = (
-        f"👥 **Invite Friends & Earn Credits!**\n\n"
-        f"🎁 **Rewards:**\n"
-        f"• You get: **{REFERRAL_REWARD_INVITER} credits** per friend\n"
-        f"• They get: **{REFERRAL_REWARD_INVITEE} bonus credits**\n\n"
-        f"📊 **Your Stats:**\n"
-        f"• Friends invited: **{invited_count}**\n"
-        f"• Total earned: **{total_earned} credits**\n\n"
-        f"🔗 **Your Invite Link:**\n"
+        f"🎁 **Free NSFW Video Hack**\n\n"
+        f"Invite **3 friends** to join Lili AI, and you get enough credits for a **FREE 4K Video Animation!**\n\n"
+        f"👇 **Your Secret Link** _(Friends get +{REFERRAL_REWARD_INVITEE} Bonus Credits)_:\n"
         f"`{invite_link}`\n\n"
-        f"_Share this link anywhere!_"
+        f"📊 **Stats:**\n"
+        f"• You have invited **{invited_count}** people\n"
+        f"• You earned **{total_earned} credits** from referrals\n"
     )
+    
+    if invited_count < invites_needed:
+        message += f"• **{remaining_invites} more friends** = FREE Video! 🎥\n"
+    else:
+        message += f"• 🎉 **You unlocked FREE videos!** Keep inviting for more!\n"
+    
+    message += f"\n_Share anywhere: Discord, Reddit, Twitter, WhatsApp!_"
     
     await update.message.reply_text(message, parse_mode='Markdown')
 
@@ -617,22 +653,32 @@ async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_balance = db.get_credits(user.id)
         
         # 计算距离免费视频还差多少
-        needed_for_video = COST_VIDEO - new_balance
+        needed_for_video = max(0, COST_VIDEO - new_balance)
         days_to_video = max(0, (needed_for_video + CHECKIN_REWARD - 1) // CHECKIN_REWARD)
         
+        # Streak emoji progression
+        if streak >= 7:
+            streak_emoji = "🔥🔥🔥"
+        elif streak >= 3:
+            streak_emoji = "🔥🔥"
+        else:
+            streak_emoji = "🔥"
+        
         message = (
-            f"✅ **Daily Check-in Success!**\n\n"
-            f"💎 Earned: **+{reward} credits**\n"
-            f"💰 Balance: **{new_balance} credits**\n"
-            f"🔥 Streak: **{streak} days**\n\n"
+            f"✅ **Check-in Successful!**\n\n"
+            f"You got **+{reward} Credits**.\n\n"
+            f"📅 Streak: **{streak} Day{'s' if streak > 1 else ''}** {streak_emoji}\n"
+            f"💰 Balance: **{new_balance} Credits**\n\n"
         )
         
         if new_balance >= COST_VIDEO:
-            message += f"🎉 **You can make a video now!** Use /roll first!\n"
+            message += f"🎉 **UNLOCKED!** You can make a video now!\n💡 Use /roll first, then animate it!\n"
         else:
-            message += f"📅 Check in **{days_to_video} more days** for a FREE video!\n"
+            message += f"📉 Only **{needed_for_video} Credits** left until your first Video!\n"
+            if days_to_video > 0:
+                message += f"🎯 **{days_to_video} more day{'s' if days_to_video > 1 else ''}** = FREE Video!\n"
         
-        message += f"\n_Come back tomorrow for another {CHECKIN_REWARD} credits!_"
+        message += f"\n⏰ Come back tomorrow!"
         
         await update.message.reply_text(message, parse_mode='Markdown')
     
