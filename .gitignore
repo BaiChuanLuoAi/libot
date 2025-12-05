@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# 生成的文件
+files/
+logs/
+*.log
+
+# 环境变量和配置文件（包含敏感信息）
+.env
+*.env
+!*.env.example
+config.env
+tg_bot/config.env
+
+# Docker
+*.tar
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+

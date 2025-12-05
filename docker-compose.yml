@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # 后端 API 服务
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lili-ai-server:latest
+    container_name: lili-api
+    restart: unless-stopped
+    ports:
+      - "5010:5010"
+    volumes:
+      # 持久化生成的图片和视频
+      - ./files:/app/files
+      # 持久化日志
+      - ./logs:/app/logs
+    environment:
+      - COMFYUI_API_URL=${COMFYUI_API_URL:-http://dx.qyxc.vip:18188}
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+    networks:
+      - lili-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5010/api/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Telegram Bot 服务
+  telegram-bot:
+    build:
+      context: ./tg_bot
+      dockerfile: Dockerfile
+    image: lili-ai-bot:latest
+    container_name: lili-bot
+    restart: unless-stopped
+    volumes:
+      # 持久化数据库
+      - ./tg_bot/bot_users.db:/app/bot_users.db
+      # 持久化配置
+      - ./tg_bot/config.env:/app/config.env
+      # 持久化提示词（可选）
+      - ./tg_bot/prompts.json:/app/prompts.json
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-8285418858:AAFtt_1rpMooqg09PNwVylkujCzaDtWHjJY}
+      - API_URL=http://api-server:5010/v1/chat/completions
+      - ADMIN_IDS=${ADMIN_IDS:-123456789}
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - api-server
+    networks:
+      - lili-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  lili-network:
+    driver: bridge
