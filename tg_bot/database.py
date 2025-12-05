@@ -41,7 +41,11 @@ class Database:
                     user_id INTEGER PRIMARY KEY,
                     username TEXT,
                     first_name TEXT,
-                    credits INTEGER DEFAULT 25,
+                    credits INTEGER DEFAULT 15,
+                    last_checkin DATE,
+                    checkin_streak INTEGER DEFAULT 0,
+                    total_checkins INTEGER DEFAULT 0,
+                    invited_by INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -66,8 +70,8 @@ class Database:
             logger.info("Database initialized successfully")
     
     def get_or_create_user(self, user_id: int, username: str = None, 
-                          first_name: str = None) -> dict:
-        """Get existing user or create new one with 25 free credits."""
+                          first_name: str = None, invited_by: int = None) -> dict:
+        """Get existing user or create new one with 15 free credits."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
@@ -83,16 +87,16 @@ class Database:
                 )
                 return dict(user)
             else:
-                # Create new user with 25 free credits (enough for 1 video or 25 images)
+                # Create new user with 15 free credits (差15分才能看视频，逼迫签到5天)
                 cursor.execute("""
-                    INSERT INTO users (user_id, username, first_name, credits)
-                    VALUES (?, ?, ?, 25)
-                """, (user_id, username, first_name))
+                    INSERT INTO users (user_id, username, first_name, credits, invited_by)
+                    VALUES (?, ?, ?, 15, ?)
+                """, (user_id, username, first_name, invited_by))
                 
                 # Log the initial credit transaction
                 cursor.execute("""
                     INSERT INTO transactions (user_id, amount, operation, description)
-                    VALUES (?, 25, 'INITIAL', 'Welcome bonus - Try video generation!')
+                    VALUES (?, 15, 'INITIAL', 'Welcome bonus - Check in daily for more!')
                 """, (user_id,))
                 
                 logger.info(f"New user created: {user_id} ({username})")
@@ -251,4 +255,77 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("SELECT id FROM transactions WHERE external_ref = ?", (external_ref,))
             return cursor.fetchone() is not None
+    
+    def daily_checkin(self, user_id: int) -> dict:
+        """
+        Process daily check-in for user.
+        Returns: {'success': bool, 'reward': int, 'streak': int, 'message': str}
+        """
+        from datetime import date
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get user data
+            cursor.execute("SELECT last_checkin, checkin_streak FROM users WHERE user_id = ?", (user_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                return {'success': False, 'message': 'User not found'}
+            
+            last_checkin = result['last_checkin']
+            current_streak = result['checkin_streak'] or 0
+            today = date.today().isoformat()
+            
+            # Check if already checked in today
+            if last_checkin == today:
+                return {
+                    'success': False,
+                    'message': 'already_checked',
+                    'streak': current_streak
+                }
+            
+            # Calculate new streak
+            from datetime import datetime, timedelta
+            if last_checkin:
+                last_date = datetime.fromisoformat(last_checkin).date()
+                yesterday = date.today() - timedelta(days=1)
+                
+                if last_date == yesterday:
+                    # Consecutive day - increment streak
+                    new_streak = current_streak + 1
+                else:
+                    # Streak broken - reset to 1
+                    new_streak = 1
+            else:
+                # First check-in ever
+                new_streak = 1
+            
+            # Base reward: 3 credits
+            reward = 3
+            
+            # Update user
+            cursor.execute("""
+                UPDATE users 
+                SET last_checkin = ?,
+                    checkin_streak = ?,
+                    total_checkins = total_checkins + 1,
+                    credits = credits + ?
+                WHERE user_id = ?
+            """, (today, new_streak, reward, user_id))
+            
+            # Log transaction
+            cursor.execute("""
+                INSERT INTO transactions (user_id, amount, operation, description)
+                VALUES (?, ?, 'CHECKIN', ?)
+            """, (user_id, reward, f"Daily check-in (Day {new_streak})"))
+            
+            logger.info(f"User {user_id} checked in: +{reward} credits, streak: {new_streak}")
+            
+            return {
+                'success': True,
+                'reward': reward,
+                'streak': new_streak,
+                'message': 'success'
+            }
 
