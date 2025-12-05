@@ -604,18 +604,31 @@ def webhook_plisio():
             print(f"⚠️  Missing order_id in Plisio callback")
             return jsonify({"error": "Missing order_id"}), 400
         
-        # 从 order_id 中提取 user_id（格式：user_{user_id}_{timestamp}）
+        # 从 order_id 中提取 user_id 和 package_key（格式：user_{user_id}_{package_key}_{timestamp}）
         try:
             parts = order_id.split('_')
             user_id = int(parts[1]) if len(parts) > 1 else None
+            package_key = parts[2] if len(parts) > 2 else 'pro'  # 默认 pro 套餐
         except:
             user_id = None
+            package_key = 'pro'
         
         if not user_id:
             print(f"⚠️  Cannot extract user_id from order_id: {order_id}")
             return jsonify({"error": "Invalid order_id format"}), 400
         
-        print(f"📋 Order: {order_id}, User: {user_id}, Status: {status}")
+        # 套餐配置（与 bot.py 中的 PACKAGES 保持一致）
+        PACKAGES = {
+            'mini': {'credits': 60, 'price': 4.99, 'name': '🎓 Student Pack'},
+            'pro': {'credits': 130, 'price': 9.99, 'name': '🔥 Pro Pack'},
+            'ultra': {'credits': 450, 'price': 29.99, 'name': '👑 Whale Pack'}
+        }
+        
+        # 获取套餐信息
+        package = PACKAGES.get(package_key, PACKAGES['pro'])
+        credits = package['credits']
+        
+        print(f"📋 Order: {order_id}, User: {user_id}, Package: {package_key}, Status: {status}")
         
         # 根据状态处理
         if status == 'pending':
@@ -631,15 +644,14 @@ def webhook_plisio():
                 return jsonify({"status": "already_processed"}), 200
             
             # 添加积分
-            credits = 100  # 固定 100 credits per purchase
             success = bot_db.add_credits(
                 user_id=user_id,
                 amount=credits,
-                money_amount=float(amount) if amount else 9.99,
+                money_amount=float(amount) if amount else package['price'],
                 currency=currency,
                 provider='plisio',
                 external_ref=order_id,
-                description=f"Plisio crypto payment {order_id}"
+                description=f"Plisio crypto payment: {package['name']}"
             )
             
             if success:

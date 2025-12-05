@@ -828,41 +828,45 @@ async def plisio_payment_callback(update: Update, context: ContextTypes.DEFAULT_
         async with aiohttp.ClientSession() as session:
             url = "https://api.plisio.net/api/v1/invoices/new"
             
-            # Plisio API 参数
+            # Plisio API 参数 - 注意：Plisio API 使用 GET 请求
             params = {
                 "api_key": PLISIO_SECRET_KEY,
-                "amount": amount,
-                "currency": "USD",  # 用户支付时可选择任何加密货币
                 "order_name": f"{package['name']} - {credits} Credits",
-                "order_id": order_id,
-                "callback_url": f"{SERVER_DOMAIN}/webhooks/plisio",
+                "order_number": order_id,  # Plisio 要求使用 order_number 而不是 order_id
                 "source_currency": "USD",  # 源货币
                 "source_amount": amount,
-                "allowed_psys_cids": ""  # 留空表示支持所有币种
+                "callback_url": f"{SERVER_DOMAIN}/webhooks/plisio",
+                "description": f"Purchase {package['name']} - {credits} credits"
             }
             
-            async with session.post(
+            # 如果要限制特定的加密货币，可以添加 allowed_psys_cids
+            # params["allowed_psys_cids"] = "BTC,ETH,USDT"
+            
+            # Plisio API 使用 GET 请求，参数作为 query parameters
+            async with session.get(
                 url,
-                data=params,
+                params=params,
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
                 if response.status == 200:
                     result = await response.json()
+                    logger.info(f"Plisio API response: {result}")
                     
-                    # Plisio 成功响应格式：{"result": "success", "data": {...}}
-                    if result.get("result") == "success":
+                    # Plisio 成功响应格式：{"status": "success", "data": {...}}
+                    if result.get("status") == "success" or result.get("data"):
                         invoice_data = result.get("data", {})
                         invoice_url = invoice_data.get("invoice_url")
+                        txn_id = invoice_data.get("txn_id")
                         
                         if invoice_url:
-                            # 创建待处理记录
+                            # 创建待处理记录，使用 Plisio 的 txn_id 作为外部引用
                             db.create_pending_payment(
                                 user_id=user.id,
                                 amount=credits,
                                 money_amount=float(amount),
                                 currency='USD',
                                 provider='plisio',
-                                external_ref=order_id,
+                                external_ref=txn_id or order_id,
                                 description=f"Plisio payment: {package['name']}"
                             )
                             
@@ -883,14 +887,14 @@ async def plisio_payment_callback(update: Update, context: ContextTypes.DEFAULT_
                                 reply_markup=reply_markup,
                                 parse_mode='Markdown'
                             )
-                            logger.info(f"✅ Plisio invoice created for user {user.id}: {order_id}")
+                            logger.info(f"✅ Plisio invoice created for user {user.id}: {order_id}, txn_id: {txn_id}")
                         else:
                             await query.message.reply_text("❌ Failed to create payment invoice. Please try again.")
-                            logger.error(f"Plisio: No invoice URL in response")
+                            logger.error(f"Plisio: No invoice URL in response: {result}")
                     else:
-                        error_msg = result.get("message", "Unknown error")
+                        error_msg = result.get("message", result.get("error", "Unknown error"))
                         await query.message.reply_text(f"❌ Payment service error: {error_msg}")
-                        logger.error(f"Plisio API error: {error_msg}")
+                        logger.error(f"Plisio API error: {error_msg}, full response: {result}")
                 else:
                     response_text = await response.text()
                     await query.message.reply_text("❌ Payment service temporarily unavailable. Please try again later.")
