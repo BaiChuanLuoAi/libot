@@ -24,7 +24,7 @@ try:
 except ImportError:
     print("⚠️  python-dotenv not installed, using system environment variables only")
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -955,6 +955,23 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def post_init(application: Application):
+    """Initialize bot commands menu after startup."""
+    # Set bot commands for the menu
+    commands = [
+        BotCommand("start", "🔥 Start & get free credits"),
+        BotCommand("roll", "🎲 Generate random AI waifu (1 credit)"),
+        BotCommand("checkin", "✅ Daily check-in (+3 credits)"),
+        BotCommand("balance", "💰 Check your credits & stats"),
+        BotCommand("invite", "👥 Invite friends, earn credits"),
+        BotCommand("buy", "💳 Buy credit packages"),
+        BotCommand("help", "❓ How to use this bot"),
+    ]
+    
+    await application.bot.set_my_commands(commands)
+    logger.info("✅ Bot commands menu set successfully")
+
+
 def main():
     """Start the bot."""
     # Get bot token from environment variable
@@ -974,8 +991,8 @@ def main():
     logger.info(f"API URL: {API_URL}")
     logger.info(f"Admin IDs: {ADMIN_IDS}")
     
-    # Create application
-    application = Application.builder().token(token).build()
+    # Create application with post_init callback
+    application = Application.builder().token(token).post_init(post_init).build()
     
     # Register handlers
     application.add_handler(CommandHandler("start", start))
