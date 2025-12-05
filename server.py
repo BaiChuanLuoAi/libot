@@ -62,11 +62,8 @@ load_dotenv()  # 加载 .env 文件中的环境变量
 
 SERVER_AUTH_KEY = os.getenv('SERVER_AUTH_KEY', 'default-insecure-key')  # 从环境变量读取
 
-# LemonSqueezy配置
-LEMONSQUEEZY_WEBHOOK_SECRET = os.getenv('LS_WEBHOOK_SECRET', '')  # 从环境变量读取
-
-# Crypto配置 (示例：Cryptomus)
-CRYPTO_WEBHOOK_SECRET = os.getenv('CRYPTO_WEBHOOK_SECRET', '')
+# Plisio配置
+PLISIO_SECRET_KEY = os.getenv('PLISIO_SECRET_KEY', '')
 
 # Telegram Bot Token (用于发送通知)
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
@@ -561,121 +558,51 @@ def send_telegram_notification(user_id: int, message: str):
     except Exception as e:
         print(f"Failed to send TG notification: {e}")
 
-@app.route('/webhooks/lemonsqueezy', methods=['POST'])
-def webhook_lemonsqueezy():
-    """处理LemonSqueezy支付回调"""
-    if not bot_db:
-        return jsonify({"error": "Database not available"}), 503
-    
-    try:
-        # 验证签名
-        signature = request.headers.get('X-Signature')
-        if LEMONSQUEEZY_WEBHOOK_SECRET and signature:
-            body = request.get_data()
-            expected_signature = hmac.new(
-                LEMONSQUEEZY_WEBHOOK_SECRET.encode(),
-                body,
-                hashlib.sha256
-            ).hexdigest()
-            
-            if not hmac.compare_digest(signature, expected_signature):
-                print("❌ LemonSqueezy signature verification failed")
-                return jsonify({"error": "Invalid signature"}), 401
-        
-        payload = request.json
-        event_name = payload.get('meta', {}).get('event_name')
-        
-        print(f"📥 LemonSqueezy webhook: {event_name}")
-        
-        # 只处理订单创建事件（支付成功）
-        if event_name == 'order_created':
-            data = payload.get('data', {})
-            attributes = data.get('attributes', {})
-            custom_data = payload.get('meta', {}).get('custom_data', {})
-            
-            order_id = attributes.get('identifier')
-            user_id = custom_data.get('user_id')
-            total = attributes.get('total')
-            currency = attributes.get('currency', 'USD')
-            
-            if not user_id or not order_id:
-                print(f"⚠️  Missing user_id or order_id")
-                return jsonify({"error": "Missing required fields"}), 400
-            
-            user_id = int(user_id)
-            
-            # 检查是否已处理
-            if bot_db.check_payment_exists(order_id):
-                print(f"✅ Order {order_id} already processed")
-                return jsonify({"status": "already_processed"}), 200
-            
-            # 计算赠送积分 (示例：$1 = 10 credits)
-            credits = int(float(total) * 10)
-            
-            # 添加积分
-            success = bot_db.add_credits(
-                user_id=user_id,
-                amount=credits,
-                money_amount=float(total),
-                currency=currency,
-                provider='lemonsqueezy',
-                external_ref=order_id,
-                description=f"LemonSqueezy payment {order_id}"
-            )
-            
-            if success:
-                print(f"✅ Added {credits} credits to user {user_id}")
-                
-                # 发送通知
-                send_telegram_notification(
-                    user_id,
-                    f"💰 **充值成功！**\n\n"
-                    f"支付金额: ${total} {currency}\n"
-                    f"获得积分: {credits}\n"
-                    f"订单号: {order_id}"
-                )
-                
-                return jsonify({"status": "success", "credits_added": credits}), 200
-            else:
-                return jsonify({"error": "Failed to add credits"}), 500
-        
-        return jsonify({"status": "ignored"}), 200
-        
-    except Exception as e:
-        print(f"❌ LemonSqueezy webhook error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
 
-@app.route('/webhooks/crypto', methods=['POST'])
-def webhook_crypto():
-    """处理加密货币支付回调 (Cryptomus/NowPayments等)"""
+@app.route('/webhooks/plisio', methods=['POST', 'GET'])
+def webhook_plisio():
+    """处理 Plisio 支付回调"""
     if not bot_db:
         return jsonify({"error": "Database not available"}), 503
     
     try:
-        # 验证签名（不同网关验证方式不同，这里以Cryptomus为例）
-        payload = request.json
+        # Plisio 使用 GET 或 POST 方法发送回调
+        # GET 方式通常用于 Status URL
+        if request.method == 'GET':
+            payload = request.args.to_dict()
+        else:
+            # POST 方式
+            payload = request.json if request.is_json else request.form.to_dict()
         
-        # Cryptomus签名验证示例
-        if CRYPTO_WEBHOOK_SECRET:
-            signature = request.headers.get('sign')
-            body_str = json.dumps(payload, separators=(',', ':'))
-            expected_signature = hashlib.md5(
-                (body_str + CRYPTO_WEBHOOK_SECRET).encode()
-            ).hexdigest()
+        print(f"📥 Plisio webhook received: {payload}")
+        
+        # 验证回调签名（Plisio 使用 verify_hash）
+        verify_hash = payload.get('verify_hash')
+        
+        if PLISIO_SECRET_KEY and verify_hash:
+            # 构建验证字符串
+            # 按照 Plisio 文档：移除 verify_hash 后按字母顺序排序参数
+            params_to_verify = {k: v for k, v in payload.items() if k != 'verify_hash'}
+            sorted_params = sorted(params_to_verify.items())
+            verify_string = json.dumps(sorted_params, separators=(',', ':')) + PLISIO_SECRET_KEY
             
-            if signature != expected_signature:
-                print("❌ Crypto signature verification failed")
+            expected_hash = hashlib.sha1(verify_string.encode()).hexdigest()
+            
+            if verify_hash != expected_hash:
+                print("❌ Plisio signature verification failed")
+                print(f"   Expected: {expected_hash}")
+                print(f"   Received: {verify_hash}")
                 return jsonify({"error": "Invalid signature"}), 401
         
-        print(f"📥 Crypto webhook received")
+        # 解析 Plisio 回调数据
+        order_id = payload.get('order_number') or payload.get('order_id')
+        status = payload.get('status')  # Plisio 状态: 'pending', 'completed', 'error', 'cancelled'
+        amount = payload.get('amount')  # 源货币金额 (USD)
+        currency = payload.get('source_currency', 'USD')
         
-        # 解析数据
-        order_id = payload.get('order_id')
-        status = payload.get('status')  # 'paid', 'pending', 'failed'
-        amount = payload.get('amount')
-        currency = payload.get('currency', 'USDT')
+        if not order_id:
+            print(f"⚠️  Missing order_id in Plisio callback")
+            return jsonify({"error": "Missing order_id"}), 400
         
         # 从 order_id 中提取 user_id（格式：user_{user_id}_{timestamp}）
         try:
@@ -684,50 +611,74 @@ def webhook_crypto():
         except:
             user_id = None
         
-        if not user_id or not order_id:
-            print(f"⚠️  Missing user_id or order_id")
-            return jsonify({"error": "Missing required fields"}), 400
+        if not user_id:
+            print(f"⚠️  Cannot extract user_id from order_id: {order_id}")
+            return jsonify({"error": "Invalid order_id format"}), 400
+        
+        print(f"📋 Order: {order_id}, User: {user_id}, Status: {status}")
         
         # 根据状态处理
         if status == 'pending':
-            # 创建待处理记录
-            credits = int(float(amount) * 10)  # $1 USDT = 10 credits
-            bot_db.create_pending_payment(
+            # 支付待确认（已创建但未完成）
+            print(f"⏳ Pending payment for user {user_id}")
+            return jsonify({"status": "ok"}), 200
+            
+        elif status == 'completed':
+            # 支付成功
+            # 检查是否已处理
+            if bot_db.check_payment_exists(order_id):
+                print(f"✅ Payment {order_id} already processed")
+                return jsonify({"status": "already_processed"}), 200
+            
+            # 添加积分
+            credits = 100  # 固定 100 credits per purchase
+            success = bot_db.add_credits(
                 user_id=user_id,
                 amount=credits,
-                money_amount=float(amount),
+                money_amount=float(amount) if amount else 9.99,
                 currency=currency,
-                provider='crypto',
+                provider='plisio',
                 external_ref=order_id,
-                description=f"Crypto payment {order_id} (pending)"
+                description=f"Plisio crypto payment {order_id}"
             )
-            print(f"⏳ Pending crypto payment for user {user_id}")
             
-        elif status == 'paid':
-            # 完成支付
-            tx = bot_db.complete_payment(order_id)
-            
-            if tx:
-                print(f"✅ Completed crypto payment for user {user_id}: {tx['amount']} credits")
+            if success:
+                print(f"✅ Added {credits} credits to user {user_id}")
                 
-                # 发送通知
+                # 发送 Telegram 通知
                 send_telegram_notification(
                     user_id,
-                    f"💰 **充值成功！**\n\n"
-                    f"支付金额: {amount} {currency}\n"
-                    f"获得积分: {tx['amount']}\n"
-                    f"订单号: {order_id}"
+                    f"💰 **Payment Successful!**\n\n"
+                    f"💵 Amount: ${amount} {currency}\n"
+                    f"💎 Credits: +{credits}\n"
+                    f"📋 Order: `{order_id}`\n\n"
+                    f"🎉 Your credits have been added!\n"
+                    f"Use /balance to check your balance."
                 )
                 
-                return jsonify({"status": "success", "credits_added": tx['amount']}), 200
+                return jsonify({"status": "success", "credits_added": credits}), 200
+            else:
+                return jsonify({"error": "Failed to add credits"}), 500
             
-        elif status == 'failed':
-            print(f"❌ Crypto payment failed: {order_id}")
+        elif status in ['error', 'cancelled', 'expired']:
+            print(f"❌ Payment {status}: {order_id}")
+            
+            # 通知用户
+            send_telegram_notification(
+                user_id,
+                f"❌ **Payment {status.title()}**\n\n"
+                f"📋 Order: `{order_id}`\n\n"
+                f"Please try again or contact support if you need help."
+            )
+            
+            return jsonify({"status": "ok"}), 200
         
+        # 其他状态
+        print(f"ℹ️  Unhandled Plisio status: {status}")
         return jsonify({"status": "ok"}), 200
         
     except Exception as e:
-        print(f"❌ Crypto webhook error: {e}")
+        print(f"❌ Plisio webhook error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500

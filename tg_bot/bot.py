@@ -60,13 +60,9 @@ VIDEO_MODEL = "video-i2v"
 COST_IMAGE = 1
 COST_VIDEO = 20
 
-# Payment Configuration
-LEMONSQUEEZY_STORE_URL = os.getenv('LS_STORE_URL', '')
-LEMONSQUEEZY_VARIANT_ID = os.getenv('LS_VARIANT_ID', '')
-
-# Crypto Payment API
-CRYPTO_API_KEY = os.getenv('CRYPTO_API_KEY', '')
-CRYPTO_MERCHANT_ID = os.getenv('CRYPTO_MERCHANT_ID', '')
+# Payment Configuration - Plisio
+PLISIO_SECRET_KEY = os.getenv('PLISIO_SECRET_KEY', '')
+SERVER_DOMAIN = os.getenv('SERVER_DOMAIN', 'https://www.lilibot.top')
 
 # Admin user IDs - Load from environment
 ADMIN_IDS_STR = os.getenv('ADMIN_IDS', '')
@@ -445,15 +441,9 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     has_payment_methods = False
     
-    # LemonSqueezy支付
-    if LEMONSQUEEZY_STORE_URL and LEMONSQUEEZY_VARIANT_ID:
-        ls_url = f"{LEMONSQUEEZY_STORE_URL}/checkout/buy/{LEMONSQUEEZY_VARIANT_ID}?checkout[custom][user_id]={user.id}"
-        keyboard.append([InlineKeyboardButton("💳 Credit Card / PayPal", url=ls_url)])
-        has_payment_methods = True
-    
-    # Crypto支付
-    if CRYPTO_API_KEY and CRYPTO_MERCHANT_ID:
-        keyboard.append([InlineKeyboardButton("₿ Crypto (USDT/BTC/TON)", callback_data=f"buy_crypto:{user.id}")])
+    # Plisio 加密货币支付
+    if PLISIO_SECRET_KEY:
+        keyboard.append([InlineKeyboardButton("₿ Pay with Crypto (BTC/ETH/USDT/XMR)", callback_data=f"buy_plisio:{user.id}")])
         has_payment_methods = True
     
     if has_payment_methods:
@@ -466,8 +456,9 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• 5 animated videos OR\n"
             "• Mix & match!\n\n"
             "💳 **Payment Methods:**\n"
-            "• Credit Card / PayPal (instant)\n"
-            "• Crypto (2-10 min)\n\n"
+            "• ₿ BTC, ETH, USDT, XMR and more\n"
+            "• 🔒 Anonymous & secure\n"
+            "• ⚡ Instant activation (2-10 min)\n\n"
             "_Best value: $1 = 10 credits!_"
         )
         await update.message.reply_text(message, reply_markup=reply_markup, parse_mode='Markdown')
@@ -484,16 +475,16 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(message, parse_mode='Markdown')
 
 
-async def crypto_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle crypto payment generation."""
+async def plisio_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Plisio crypto payment generation."""
     query = update.callback_query
     user = update.effective_user
     
     await query.answer()
     
-    if not CRYPTO_API_KEY or not CRYPTO_MERCHANT_ID:
+    if not PLISIO_SECRET_KEY:
         await query.message.reply_text(
-            "❌ 加密货币支付暂时不可用，请使用其他支付方式或联系管理员。"
+            "❌ Crypto payment is temporarily unavailable. Please contact admin."
         )
         return
     
@@ -502,68 +493,81 @@ async def crypto_payment_callback(update: Update, context: ContextTypes.DEFAULT_
     amount = "9.99"
     
     try:
-        # 调用Cryptomus API创建订单（示例）
+        # 调用 Plisio API 创建发票
         async with aiohttp.ClientSession() as session:
-            # 构建签名
-            data = {
+            url = "https://api.plisio.net/api/v1/invoices/new"
+            
+            # Plisio API 参数
+            params = {
+                "api_key": PLISIO_SECRET_KEY,
                 "amount": amount,
-                "currency": "USD",
+                "currency": "USD",  # 用户支付时可选择任何加密货币
+                "order_name": "100 Credits",
                 "order_id": order_id,
-                "url_callback": f"{os.getenv('SERVER_URL', 'https://your-server.com')}/webhooks/crypto",
-                "url_success": "https://t.me/your_bot",
-            }
-            
-            data_str = json.dumps(data, separators=(',', ':'))
-            sign = hashlib.md5((data_str + CRYPTO_API_KEY).encode()).hexdigest()
-            
-            headers = {
-                "merchant": CRYPTO_MERCHANT_ID,
-                "sign": sign,
-                "Content-Type": "application/json"
+                "callback_url": f"{SERVER_DOMAIN}/webhooks/plisio",
+                "source_currency": "USD",  # 源货币
+                "source_amount": amount,
+                "allowed_psys_cids": ""  # 留空表示支持所有币种
             }
             
             async with session.post(
-                "https://api.cryptomus.com/v1/payment",
-                json=data,
-                headers=headers,
+                url,
+                data=params,
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
                 if response.status == 200:
                     result = await response.json()
-                    payment_url = result.get('result', {}).get('url')
                     
-                    if payment_url:
-                        # 创建待处理记录
-                        db.create_pending_payment(
-                            user_id=user.id,
-                            amount=100,  # 100 credits
-                            money_amount=9.99,
-                            currency='USD',
-                            provider='crypto',
-                            external_ref=order_id,
-                            description="Crypto payment pending"
-                        )
+                    # Plisio 成功响应格式：{"result": "success", "data": {...}}
+                    if result.get("result") == "success":
+                        invoice_data = result.get("data", {})
+                        invoice_url = invoice_data.get("invoice_url")
                         
-                        keyboard = [[InlineKeyboardButton("💰 去支付", url=payment_url)]]
-                        reply_markup = InlineKeyboardMarkup(keyboard)
-                        
-                        await query.message.reply_text(
-                            "₿ **加密货币支付**\n\n"
-                            f"金额: ${amount} (约 {amount} USDT)\n"
-                            f"订单号: `{order_id}`\n\n"
-                            "点击下方按钮前往支付页面。\n"
-                            "支付完成后，积分将在2-10分钟内到账。",
-                            reply_markup=reply_markup,
-                            parse_mode='Markdown'
-                        )
+                        if invoice_url:
+                            # 创建待处理记录
+                            db.create_pending_payment(
+                                user_id=user.id,
+                                amount=100,  # 100 credits
+                                money_amount=9.99,
+                                currency='USD',
+                                provider='plisio',
+                                external_ref=order_id,
+                                description="Plisio crypto payment pending"
+                            )
+                            
+                            keyboard = [[InlineKeyboardButton("💰 Pay Now", url=invoice_url)]]
+                            reply_markup = InlineKeyboardMarkup(keyboard)
+                            
+                            await query.message.reply_text(
+                                "₿ **Crypto Payment**\n\n"
+                                f"💵 Amount: ${amount}\n"
+                                f"📋 Order ID: `{order_id}`\n\n"
+                                "🪙 **Supported Coins:**\n"
+                                "BTC, ETH, USDT, XMR, LTC, and more!\n\n"
+                                "Click the button below to complete payment.\n"
+                                "Credits will be added within 2-10 minutes after confirmation.\n\n"
+                                "🔒 Anonymous & Secure",
+                                reply_markup=reply_markup,
+                                parse_mode='Markdown'
+                            )
+                            logger.info(f"✅ Plisio invoice created for user {user.id}: {order_id}")
+                        else:
+                            await query.message.reply_text("❌ Failed to create payment invoice. Please try again.")
+                            logger.error(f"Plisio: No invoice URL in response")
                     else:
-                        await query.message.reply_text("❌ 创建支付订单失败，请稍后重试。")
+                        error_msg = result.get("message", "Unknown error")
+                        await query.message.reply_text(f"❌ Payment service error: {error_msg}")
+                        logger.error(f"Plisio API error: {error_msg}")
                 else:
-                    await query.message.reply_text("❌ 支付服务暂时不可用，请稍后重试。")
+                    response_text = await response.text()
+                    await query.message.reply_text("❌ Payment service temporarily unavailable. Please try again later.")
+                    logger.error(f"Plisio HTTP {response.status}: {response_text}")
     
     except Exception as e:
-        logger.error(f"Crypto payment error: {e}")
-        await query.message.reply_text("❌ 创建支付订单时出错，请联系管理员。")
+        logger.error(f"Plisio payment error: {e}")
+        import traceback
+        traceback.print_exc()
+        await query.message.reply_text("❌ Error creating payment. Please contact admin.")
 
 
 async def add_credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -650,7 +654,7 @@ def main():
     
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(video_callback, pattern="^video:"))
-    application.add_handler(CallbackQueryHandler(crypto_payment_callback, pattern="^buy_crypto:"))
+    application.add_handler(CallbackQueryHandler(plisio_payment_callback, pattern="^buy_plisio:"))
     
     # Error handler
     application.add_error_handler(error_handler)
