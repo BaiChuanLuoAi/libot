@@ -102,6 +102,10 @@ PACKAGES = {
 ADMIN_IDS_STR = os.getenv('ADMIN_IDS', '')
 ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(',') if id.strip()] if ADMIN_IDS_STR else []
 
+# Required Channel - 强制关注频道配置
+REQUIRED_CHANNEL = os.getenv('REQUIRED_CHANNEL', '@liliai_official')  # 必须是 @username 格式
+CHANNEL_LINK = os.getenv('CHANNEL_LINK', 'https://t.me/liliai_official')  # 频道链接
+
 # Initialize database
 db = Database()
 
@@ -221,6 +225,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command with optional referral."""
     user = update.effective_user
     
+    # 🔒 STEP 1: 强制检查频道关注状态 - 核心安全机制
+    if REQUIRED_CHANNEL:
+        try:
+            member = await context.bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user.id)
+            
+            # ❌ 未关注频道：状态为 'left' (未加入) 或 'kicked' (被踢出)
+            if member.status in ['left', 'kicked']:
+                # 🚫 拒绝访问，要求先加入频道
+                keyboard = [
+                    [InlineKeyboardButton("👉 Join Official Channel", url=CHANNEL_LINK)],
+                    [InlineKeyboardButton("✅ I Have Joined", callback_data="check_join_status")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await update.message.reply_text(
+                    "🛑 **ACCESS REQUIRED**\n\n"
+                    "To prevent bots and activate your **15 FREE Credits**, please join our official channel first.\n\n"
+                    "**How to unlock:**\n"
+                    "1️⃣ Tap **'Join Official Channel'** below\n"
+                    "2️⃣ Join the channel\n"
+                    "3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
+                    "_We use this to prevent spam bots._",
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
+                return  # 🚨 关键！阻止后续逻辑执行，不发放积分！
+                
+        except Exception as e:
+            # 如果机器人不是频道管理员，会报错 'Chat not found'
+            logger.warning(f"⚠️ Channel Check Error: {e}")
+            logger.warning(f"⚠️ Please make sure the bot is an administrator in {REQUIRED_CHANNEL}")
+            # 为了不影响已有用户，这里暂时放行
+            # 生产环境建议：如果检查失败，通知管理员而不是放行
+            pass
+    
     # Check for referral code in /start command
     referrer_id = None
     is_new_user = False
@@ -241,6 +280,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user.id,))
         is_new_user = cursor.fetchone() is None
     
+    # ✅ 只有通过频道检查的用户才能执行到这里
     # Create or get user
     user_data = db.get_or_create_user(
         user_id=user.id,
@@ -1121,6 +1161,73 @@ async def support_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def check_join_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle '✅ I Have Joined' button callback - 验证用户是否真的加入了频道."""
+    query = update.callback_query
+    user = query.from_user
+    
+    await query.answer()  # Acknowledge the button click
+    
+    if not REQUIRED_CHANNEL:
+        await query.edit_message_text("✅ Channel verification is not required.")
+        return
+    
+    try:
+        # 再次检查用户的频道成员状态
+        member = await context.bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user.id)
+        
+        if member.status in ['member', 'administrator', 'creator']:
+            # ✅ 验证通过！用户已经加入频道
+            logger.info(f"✅ User {user.id} verified channel membership")
+            
+            # 检查用户是否已经注册过（防止重复注册）
+            with db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user.id,))
+                existing_user = cursor.fetchone()
+            
+            if not existing_user:
+                # 新用户：创建账户并发放15积分
+                db.get_or_create_user(
+                    user_id=user.id,
+                    username=user.username,
+                    first_name=user.first_name
+                )
+                
+                await query.edit_message_text(
+                    "🎉 **Verification Success!**\n\n"
+                    "✅ You are now a verified member!\n"
+                    f"💎 **+{NEW_USER_BONUS} Credits** have been added to your account.\n\n"
+                    "🎲 Use /roll to generate your first AI waifu!\n"
+                    "✅ Use /checkin daily for FREE credits!\n\n"
+                    "_Let's make some magic!_ ✨",
+                    parse_mode='Markdown'
+                )
+            else:
+                # 老用户：已经验证过了
+                await query.edit_message_text(
+                    "✅ **Welcome Back!**\n\n"
+                    "You are already verified and have full access.\n\n"
+                    "🎲 /roll - Generate AI waifu\n"
+                    "💰 /balance - Check your credits\n"
+                    "✅ /checkin - Daily bonus",
+                    parse_mode='Markdown'
+                )
+        else:
+            # ❌ 用户还是没有加入频道
+            await query.answer(
+                "❌ You haven't joined the channel yet! Please join first.",
+                show_alert=True
+            )
+            
+    except Exception as e:
+        logger.error(f"Error checking join status for user {user.id}: {e}")
+        await query.answer(
+            "⚠️ Error checking channel status. Please try again or contact support.",
+            show_alert=True
+        )
+
+
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1190,6 +1297,7 @@ def main():
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     
     # Callback query handlers
+    application.add_handler(CallbackQueryHandler(check_join_status_callback, pattern="^check_join_status$"))
     application.add_handler(CallbackQueryHandler(video_callback, pattern="^video:"))
     application.add_handler(CallbackQueryHandler(package_selection_callback, pattern="^package:"))
     application.add_handler(CallbackQueryHandler(plisio_payment_callback, pattern="^pay_plisio:"))
