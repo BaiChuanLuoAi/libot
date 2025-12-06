@@ -24,7 +24,7 @@ try:
 except ImportError:
     print("⚠️  python-dotenv not installed, using system environment variables only")
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -1051,9 +1051,12 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Queue Length: **{queue_length}** tasks\n\n"
             
             "🛠 **Admin Commands:**\n"
-            "• `/add_credits [user_id] [amount]`\n"
-            "• `/broadcast [message]`\n"
-            "• `/support` - Support info\n\n"
+            "• `/add_credits [user_id] [amount]` - 给用户添加积分\n"
+            "• `/view_user [user_id]` - 查看用户详情\n"
+            "• `/view_orders [user_id]` - 查看用户订单\n"
+            "• `/stats` - 详细统计信息\n"
+            "• `/broadcast [message]` - 广播消息\n"
+            "• `/list_users [limit]` - 列出最近用户\n\n"
             
             "_Real-time data from database_"
         )
@@ -1065,6 +1068,380 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ Error loading dashboard. Check logs for details."
         )
+
+
+async def view_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /view_user command - View user details (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        return
+    
+    # Parse arguments
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "❌ **Usage:** `/view_user [user_id]`\n"
+            "**Example:** `/view_user 123456789`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+        
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get user info
+            cursor.execute("""
+                SELECT user_id, username, first_name, credits, invited_by,
+                       checkin_streak, total_checkins, last_checkin, created_at
+                FROM users WHERE user_id = ?
+            """, (target_user_id,))
+            user_info = cursor.fetchone()
+            
+            if not user_info:
+                await update.message.reply_text(f"❌ User `{target_user_id}` not found.")
+                return
+            
+            # Get transaction history count
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM credit_history
+                WHERE user_id = ?
+            """, (target_user_id,))
+            transaction_count = cursor.fetchone()['count']
+            
+            # Get total spent credits
+            cursor.execute("""
+                SELECT SUM(ABS(amount)) as spent FROM credit_history
+                WHERE user_id = ? AND amount < 0
+            """, (target_user_id,))
+            total_spent = cursor.fetchone()['spent'] or 0
+            
+            # Get referral count
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM users
+                WHERE invited_by = ?
+            """, (target_user_id,))
+            referral_count = cursor.fetchone()['count']
+            
+            # Get payment history
+            cursor.execute("""
+                SELECT COUNT(*) as count, SUM(money_amount) as total
+                FROM payments
+                WHERE user_id = ? AND status = 'completed'
+            """, (target_user_id,))
+            payment_info = cursor.fetchone()
+            payment_count = payment_info['count'] or 0
+            total_paid = payment_info['total'] or 0
+        
+        # Format last checkin
+        last_checkin = user_info['last_checkin'] or "Never"
+        if last_checkin != "Never":
+            last_checkin = last_checkin[:10]  # Show only date
+        
+        # Format created_at
+        created_at = user_info['created_at'][:10] if user_info['created_at'] else "Unknown"
+        
+        # Build message
+        inviter_text = f"`{user_info['invited_by']}`" if user_info['invited_by'] else "Direct"
+        username_text = f"@{user_info['username']}" if user_info['username'] else "No username"
+        
+        message = (
+            f"👤 **User Details**\n\n"
+            f"🆔 **ID:** `{user_info['user_id']}`\n"
+            f"👤 **Name:** {user_info['first_name']}\n"
+            f"🔖 **Username:** {username_text}\n"
+            f"📅 **Joined:** {created_at}\n\n"
+            
+            f"💎 **Credits:** {user_info['credits']}\n"
+            f"📊 **Total Spent:** {total_spent} credits\n"
+            f"📝 **Transactions:** {transaction_count}\n\n"
+            
+            f"✅ **Check-ins:** {user_info['total_checkins']} total\n"
+            f"🔥 **Current Streak:** {user_info['checkin_streak']} days\n"
+            f"🕒 **Last Check-in:** {last_checkin}\n\n"
+            
+            f"👥 **Referrals:** {referral_count} users invited\n"
+            f"📥 **Invited By:** {inviter_text}\n\n"
+            
+            f"💳 **Payments:** {payment_count} orders\n"
+            f"💰 **Total Paid:** ${total_paid:.2f}\n\n"
+            
+            f"🛠️ **Quick Actions:**\n"
+            f"• `/add_credits {target_user_id} [amount]`\n"
+            f"• `/view_orders {target_user_id}`"
+        )
+        
+        await update.message.reply_text(message, parse_mode='Markdown')
+        
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user_id. Must be a number.")
+    except Exception as e:
+        logger.error(f"Error viewing user: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
+async def view_orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /view_orders command - View user payment history (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        return
+    
+    # Parse arguments
+    if len(context.args) < 1:
+        await update.message.reply_text(
+            "❌ **Usage:** `/view_orders [user_id] [limit]`\n"
+            "**Example:** `/view_orders 123456789 10`\n"
+            "_(limit is optional, default is 10)_",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+        limit = int(context.args[1]) if len(context.args) > 1 else 10
+        
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if user exists
+            cursor.execute("SELECT first_name FROM users WHERE user_id = ?", (target_user_id,))
+            user_info = cursor.fetchone()
+            
+            if not user_info:
+                await update.message.reply_text(f"❌ User `{target_user_id}` not found.")
+                return
+            
+            # Get payment history
+            cursor.execute("""
+                SELECT payment_id, amount, money_amount, currency, status, 
+                       provider, external_ref, created_at, completed_at
+                FROM payments
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (target_user_id, limit))
+            
+            orders = cursor.fetchall()
+        
+        if not orders:
+            await update.message.reply_text(
+                f"📋 **Payment History for User {target_user_id}**\n\n"
+                f"No orders found."
+            )
+            return
+        
+        # Build message
+        message = f"📋 **Payment History for {user_info['first_name']}** (`{target_user_id}`)\n\n"
+        
+        for order in orders:
+            status_emoji = {
+                'completed': '✅',
+                'pending': '⏳',
+                'failed': '❌',
+                'cancelled': '🚫'
+            }.get(order['status'], '❓')
+            
+            created = order['created_at'][:16] if order['created_at'] else "Unknown"
+            completed = order['completed_at'][:16] if order['completed_at'] else "-"
+            
+            message += (
+                f"{status_emoji} **Order #{order['payment_id']}**\n"
+                f"  💰 ${order['money_amount']:.2f} {order['currency']}\n"
+                f"  💎 {order['amount']} credits\n"
+                f"  🔧 {order['provider']}\n"
+                f"  📅 {created}\n"
+            )
+            
+            if order['status'] == 'completed':
+                message += f"  ✅ Completed: {completed}\n"
+            
+            message += "\n"
+        
+        message += f"_Showing latest {len(orders)} orders_"
+        
+        await update.message.reply_text(message, parse_mode='Markdown')
+        
+    except ValueError:
+        await update.message.reply_text("❌ Invalid arguments. user_id and limit must be numbers.")
+    except Exception as e:
+        logger.error(f"Error viewing orders: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /stats command - Show detailed statistics (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        return
+    
+    try:
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # User statistics
+            cursor.execute("SELECT COUNT(*) as total FROM users")
+            total_users = cursor.fetchone()['total']
+            
+            cursor.execute("""
+                SELECT COUNT(*) as today FROM users
+                WHERE DATE(created_at) = DATE('now')
+            """)
+            new_today = cursor.fetchone()['today']
+            
+            cursor.execute("""
+                SELECT COUNT(*) as week FROM users
+                WHERE DATE(created_at) >= DATE('now', '-7 days')
+            """)
+            new_week = cursor.fetchone()['week']
+            
+            # Payment statistics
+            cursor.execute("""
+                SELECT COUNT(*) as count, SUM(money_amount) as total
+                FROM payments WHERE status = 'completed'
+            """)
+            payment_stats = cursor.fetchone()
+            total_orders = payment_stats['count'] or 0
+            total_revenue = payment_stats['total'] or 0
+            
+            cursor.execute("""
+                SELECT COUNT(*) as count, SUM(money_amount) as total
+                FROM payments
+                WHERE status = 'completed' AND DATE(completed_at) = DATE('now')
+            """)
+            today_stats = cursor.fetchone()
+            orders_today = today_stats['count'] or 0
+            revenue_today = today_stats['total'] or 0
+            
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM payments WHERE status = 'pending'
+            """)
+            pending_orders = cursor.fetchone()['count']
+            
+            # Credit statistics
+            cursor.execute("SELECT SUM(credits) as total FROM users")
+            total_credits = cursor.fetchone()['total'] or 0
+            
+            cursor.execute("SELECT AVG(credits) as avg FROM users")
+            avg_credits = cursor.fetchone()['avg'] or 0
+            
+            # Checkin statistics
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM users WHERE total_checkins > 0
+            """)
+            checkin_users = cursor.fetchone()['count']
+            
+            cursor.execute("""
+                SELECT MAX(checkin_streak) as max_streak FROM users
+            """)
+            max_streak = cursor.fetchone()['max_streak'] or 0
+            
+            # Referral statistics
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM users WHERE invited_by IS NOT NULL
+            """)
+            referred_users = cursor.fetchone()['count']
+            
+            # Top users by credits
+            cursor.execute("""
+                SELECT user_id, first_name, credits
+                FROM users
+                ORDER BY credits DESC
+                LIMIT 5
+            """)
+            top_users = cursor.fetchall()
+        
+        # Build message
+        message = (
+            "📊 **Detailed Statistics**\n\n"
+            
+            "👥 **Users:**\n"
+            f"• Total: **{total_users}**\n"
+            f"• New Today: **{new_today}**\n"
+            f"• New This Week: **{new_week}**\n"
+            f"• With Referrals: **{referred_users}** ({referred_users/total_users*100:.1f}%)\n\n"
+            
+            "💰 **Revenue:**\n"
+            f"• Total: **${total_revenue:.2f}** ({total_orders} orders)\n"
+            f"• Today: **${revenue_today:.2f}** ({orders_today} orders)\n"
+            f"• Pending: **{pending_orders}** orders\n"
+            f"• ARPU: **${total_revenue/total_users:.2f}**\n\n"
+            
+            "💎 **Credits:**\n"
+            f"• Total in System: **{total_credits:,}**\n"
+            f"• Average per User: **{avg_credits:.1f}**\n\n"
+            
+            "✅ **Engagement:**\n"
+            f"• Check-in Users: **{checkin_users}** ({checkin_users/total_users*100:.1f}%)\n"
+            f"• Max Streak: **{max_streak}** days\n\n"
+            
+            "🏆 **Top Users by Credits:**\n"
+        )
+        
+        for i, u in enumerate(top_users, 1):
+            message += f"{i}. {u['first_name']} - {u['credits']} credits\n"
+        
+        await update.message.reply_text(message, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Error getting stats: {e}")
+        import traceback
+        traceback.print_exc()
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
+async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /list_users command - List recent users (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        return
+    
+    try:
+        limit = int(context.args[0]) if context.args else 20
+        limit = min(limit, 50)  # Max 50 users
+        
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT user_id, username, first_name, credits, 
+                       total_checkins, created_at
+                FROM users
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (limit,))
+            
+            users = cursor.fetchall()
+        
+        if not users:
+            await update.message.reply_text("No users found.")
+            return
+        
+        message = f"👥 **Latest {len(users)} Users**\n\n"
+        
+        for u in users:
+            username = f"@{u['username']}" if u['username'] else "no username"
+            created = u['created_at'][:10] if u['created_at'] else "Unknown"
+            message += (
+                f"• **{u['first_name']}** ({username})\n"
+                f"  ID: `{u['user_id']}` | 💎 {u['credits']} | ✅ {u['total_checkins']}\n"
+                f"  📅 {created}\n\n"
+            )
+        
+        message += f"_Use `/view_user [id]` for details_"
+        
+        await update.message.reply_text(message, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Error listing users: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1243,8 +1620,8 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(application: Application):
     """Initialize bot commands menu after startup."""
-    # Set bot commands for the menu
-    commands = [
+    # Set bot commands for regular users
+    user_commands = [
         BotCommand("start", "🔥 Start & get free credits"),
         BotCommand("roll", "🎲 Generate random AI waifu (1 credit)"),
         BotCommand("checkin", "✅ Daily check-in (+3 credits)"),
@@ -1255,7 +1632,39 @@ async def post_init(application: Application):
         BotCommand("help", "❓ How to use this bot"),
     ]
     
-    await application.bot.set_my_commands(commands)
+    # Set bot commands for admin users
+    admin_commands = [
+        BotCommand("start", "🔥 Start & get free credits"),
+        BotCommand("roll", "🎲 Generate random AI waifu"),
+        BotCommand("checkin", "✅ Daily check-in"),
+        BotCommand("balance", "💰 Check credits"),
+        BotCommand("invite", "👥 Invite friends"),
+        BotCommand("buy", "💳 Buy credits"),
+        BotCommand("support", "🆘 Support"),
+        BotCommand("help", "❓ Help"),
+        BotCommand("admin", "📈 Admin Dashboard"),
+        BotCommand("stats", "📊 Detailed Statistics"),
+        BotCommand("view_user", "👤 View User Details"),
+        BotCommand("view_orders", "📋 View User Orders"),
+        BotCommand("list_users", "👥 List Recent Users"),
+        BotCommand("add_credits", "💎 Add Credits to User"),
+        BotCommand("broadcast", "📢 Broadcast Message"),
+    ]
+    
+    # Set default commands for all users
+    await application.bot.set_my_commands(user_commands)
+    
+    # Set admin commands for each admin user
+    for admin_id in ADMIN_IDS:
+        try:
+            await application.bot.set_my_commands(
+                admin_commands,
+                scope=BotCommandScopeChat(chat_id=admin_id)
+            )
+            logger.info(f"✅ Admin commands set for admin {admin_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to set admin commands for {admin_id}: {e}")
+    
     logger.info("✅ Bot commands menu set successfully")
 
 
@@ -1295,6 +1704,10 @@ def main():
     application.add_handler(CommandHandler("admin", admin_dashboard))
     application.add_handler(CommandHandler("add_credits", add_credits_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("view_user", view_user_command))
+    application.add_handler(CommandHandler("view_orders", view_orders_command))
+    application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("list_users", list_users_command))
     
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(check_join_status_callback, pattern="^check_join_status$"))

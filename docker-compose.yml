@@ -52,7 +52,7 @@ services:
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-8285418858:AAFtt_1rpMooqg09PNwVylkujCzaDtWHjJY}
       - API_URL=http://api-server:5010/v1/chat/completions
-      - ADMIN_IDS=${ADMIN_IDS:-123456789}
+      - ADMIN_IDS=1667404229
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
     depends_on:
