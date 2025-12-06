@@ -67,7 +67,25 @@ class Database:
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
             """)
+            
+            # Perform schema migrations
+            self._migrate_schema(cursor)
+            
             logger.info("Database initialized successfully")
+    
+    def _migrate_schema(self, cursor):
+        """Migrate database schema to add missing columns."""
+        try:
+            # Check if invited_by column exists
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            if 'invited_by' not in columns:
+                logger.info("Adding missing 'invited_by' column to users table")
+                cursor.execute("ALTER TABLE users ADD COLUMN invited_by INTEGER")
+                logger.info("Successfully added 'invited_by' column")
+        except Exception as e:
+            logger.error(f"Schema migration error: {e}")
     
     def get_or_create_user(self, user_id: int, username: str = None, 
                           first_name: str = None, invited_by: int = None) -> dict:
