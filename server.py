@@ -76,17 +76,9 @@ ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(',') if id.strip()] i
 COMFYUI_API_URL = "http://dx.qyxc.vip:18188"  # ComfyUI服务器地址
 COMFYUI_CLIENT_ID = str(uuid.uuid4())
 
-# RunPod API配置（视频生成） - 从环境变量读取
-RUNPOD_API_KEY_I2V = os.getenv("RUNPOD_API_KEY_I2V")  # 图生视频专用
-RUNPOD_API_KEY_T2V = os.getenv("RUNPOD_API_KEY_T2V")  # 文生视频专用
-RUNPOD_ENDPOINTS = {
-    "portrait_t2v": "wdxbn5xhh177yj",  # 竖屏文生视频
-    "portrait_i2v": "11xvnkxygr2qp8",  # 竖屏图生视频
-}
-ENDPOINT_API_KEYS = {
-    "portrait_t2v": RUNPOD_API_KEY_T2V,
-    "portrait_i2v": RUNPOD_API_KEY_I2V,
-}
+# ComfyUI 视频生成配置 - 直连端点（不再使用RunPod）
+COMFYUI_VIDEO_API_URL = "https://n006.unicorn.org.cn:10297"  # 视频生成专用ComfyUI端点
+COMFYUI_VIDEO_CLIENT_ID = str(uuid.uuid4())
 
 # 目录配置
 FILES_DIR = os.path.join(os.getcwd(), "files")
@@ -207,18 +199,16 @@ IMAGE_WORKFLOW = {
     }
 }
 
-# 视频生成工作流（从文件加载）
+# 视频生成工作流（从文件加载）- 使用新的Cephalon工作流
 def load_video_workflows():
-    t2v_path = "video_wan2_2_14B_t2vAPI.json"
-    i2v_path = "video_wan2_2_14B_i2v_API.json"
+    t2v_path = "video_wan2_2_14B_t2v_API_Cephalon.json"
+    i2v_path = "video_wan2_2_14B_i2v_API_Cephalon.json"
     
     with open(t2v_path, "r", encoding="utf-8") as f:
-        t2v_data = json.load(f)
-        t2v_workflow = t2v_data.get("input", {}).get("workflow", {})
+        t2v_workflow = json.load(f)
     
     with open(i2v_path, "r", encoding="utf-8") as f:
-        i2v_data = json.load(f)
-        i2v_workflow = i2v_data.get("input", {}).get("workflow", {})
+        i2v_workflow = json.load(f)
     
     return t2v_workflow, i2v_workflow
 
@@ -449,66 +439,171 @@ def get_comfyui_image(filename, subfolder="", folder_type="output"):
         return None
 
 # ===== RunPod API调用（视频）=====
-def runpod_submit(payload, endpoint_id, api_key):
-    """提交到RunPod"""
-    url = f"https://api.runpod.ai/v2/{endpoint_id}/run"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"  # 完整的API Key
-    }
+# ===== ComfyUI 视频生成API调用（直连）=====
+def upload_image_to_comfyui(image_data_bytes, filename):
+    """上传图片到ComfyUI服务器"""
     try:
-        print(f"  → 连接到RunPod: {url}")
-        print(f"  → API Key前缀: {api_key[:20]}...")
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        url = f"{COMFYUI_VIDEO_API_URL}/upload/image"
+        
+        # 构建multipart form data
+        files = {
+            'image': (filename, image_data_bytes, 'image/png')
+        }
+        
+        response = requests.post(url, files=files, timeout=60)
+        response.raise_for_status()
+        
+        result = response.json()
+        uploaded_name = result.get('name', filename)
+        
+        print(f"  → 图片已上传到ComfyUI: {uploaded_name}")
+        return uploaded_name
+    
+    except Exception as e:
+        print(f"上传图片到ComfyUI失败: {e}")
+        raise
+
+def submit_video_to_comfyui(workflow):
+    """提交视频生成任务到ComfyUI（直连）"""
+    try:
+        prompt_data = {
+            "prompt": workflow,
+            "client_id": COMFYUI_VIDEO_CLIENT_ID
+        }
+        
+        url = f"{COMFYUI_VIDEO_API_URL}/prompt"
+        print(f"  → 连接到ComfyUI视频端点: {url}")
+        print(f"  → Client ID: {COMFYUI_VIDEO_CLIENT_ID}")
+        
+        response = requests.post(
+            url,
+            json=prompt_data,
+            timeout=120
+        )
         print(f"  → HTTP状态: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"  → 响应内容: {response.text[:500]}")
+            print(f"  → 响应内容: {response.text[:200]}")
         
         response.raise_for_status()
         result = response.json()
-        print(f"  → 响应成功: job_id={result.get('id', 'N/A')}")
-        return result
+        
+        prompt_id = result.get("prompt_id")
+        if not prompt_id:
+            raise Exception("ComfyUI未返回prompt_id")
+        
+        print(f"✅ 任务已提交到ComfyUI，prompt_id: {prompt_id}")
+        return {"prompt_id": prompt_id}
+    
     except requests.exceptions.ConnectionError as e:
-        print(f"❌ RunPod连接错误: 无法连接到RunPod API")
-        print(f"   请检查网络连接")
-        raise Exception(f"无法连接到RunPod API，请检查网络")
+        print(f"❌ ComfyUI连接错误: 无法连接到ComfyUI视频API")
+        raise Exception(f"无法连接到ComfyUI视频API，请检查网络")
     except requests.exceptions.Timeout:
-        print(f"❌ RunPod超时（30秒）")
-        raise Exception(f"RunPod API超时")
+        print(f"❌ ComfyUI超时（120秒）")
+        raise Exception(f"ComfyUI视频API超时")
     except requests.exceptions.HTTPError as e:
-        error_detail = ""
-        try:
-            error_detail = e.response.json()
-            print(f"  → 错误详情(JSON): {error_detail}")
-        except:
-            error_detail = e.response.text
-            print(f"  → 错误详情(Text): {error_detail[:500]}")
-        
-        # 401通常是API Key问题
-        if e.response.status_code == 401:
-            print(f"❌ RunPod认证失败（401）")
-            print(f"   可能原因：")
-            print(f"   1. API Key已过期或无效")
-            print(f"   2. API Key没有访问该端点的权限")
-            print(f"   3. RunPod账户余额不足")
-            raise Exception(f"RunPod认证失败：API Key无效或已过期")
-        
-        print(f"❌ RunPod HTTP错误 {e.response.status_code}: {error_detail}")
-        raise Exception(f"RunPod API错误 ({e.response.status_code}): {error_detail}")
+        error_detail = e.response.text[:200] if e.response else str(e)
+        print(f"❌ ComfyUI HTTP错误 {e.response.status_code}: {error_detail}")
+        raise Exception(f"ComfyUI视频API错误 ({e.response.status_code}): {error_detail}")
     except Exception as e:
-        print(f"❌ RunPod提交失败: {e}")
-        raise Exception(f"提交失败: {str(e)}")
+        print(f"❌ 提交失败: {e}")
+        raise
 
-def runpod_status(job_id, endpoint_id, api_key):
-    """获取RunPod任务状态"""
-    url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}"
-    headers = {"Authorization": f"Bearer {api_key}"}
+def check_comfyui_video_status(prompt_id):
+    """检查ComfyUI视频生成状态"""
     try:
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        return response.json()
+        url = f"{COMFYUI_VIDEO_API_URL}/history/{prompt_id}"
+        response = requests.get(url, timeout=30)
+        
+        if response.status_code != 200:
+            return None
+        
+        history = response.json()
+        
+        if prompt_id not in history:
+            return {"status": "IN_QUEUE"}
+        
+        task_info = history[prompt_id]
+        
+        # 检查是否完成
+        if "outputs" in task_info and task_info["outputs"]:
+            return {
+                "status": "COMPLETED",
+                "outputs": task_info["outputs"]
+            }
+        
+        # 检查是否正在运行
+        status_data = task_info.get("status", {})
+        if status_data.get("status_str") == "success":
+            return {
+                "status": "COMPLETED",
+                "outputs": task_info.get("outputs", {})
+            }
+        elif status_data.get("completed", False):
+            return {
+                "status": "COMPLETED",
+                "outputs": task_info.get("outputs", {})
+            }
+        
+        # 检查是否有错误
+        if "error" in task_info or status_data.get("status_str") == "error":
+            return {"status": "FAILED"}
+        
+        # 否则仍在处理中
+        return {"status": "IN_PROGRESS"}
+    
     except Exception as e:
+        print(f"检查ComfyUI状态时出错: {e}")
+        return None
+
+def download_comfyui_video(outputs):
+    """从ComfyUI下载生成的视频 - 与图片提取方式一致"""
+    try:
+        # 查找视频输出节点（SaveVideo）
+        for node_id, node_output in outputs.items():
+            if "videos" in node_output:
+                videos = node_output["videos"]
+                if videos and len(videos) > 0:
+                    video_info = videos[0]
+                    filename = video_info.get("filename")
+                    subfolder = video_info.get("subfolder", "")
+                    
+                    if filename:
+                        # 使用与图片一致的下载方式
+                        video_data = get_comfyui_video(filename, subfolder)
+                        if video_data:
+                            return video_data
+        
+        print("❌ 未找到视频输出")
+        return None
+    
+    except Exception as e:
+        print(f"下载ComfyUI视频时出错: {e}")
+        return None
+
+def get_comfyui_video(filename, subfolder=""):
+    """从ComfyUI下载视频文件 - 与get_comfyui_image类似"""
+    try:
+        params = {
+            "filename": filename,
+            "type": "output"
+        }
+        if subfolder:
+            params["subfolder"] = subfolder
+        
+        from urllib.parse import urlencode
+        query_string = urlencode(params)
+        url = f"{COMFYUI_VIDEO_API_URL}/view?{query_string}"
+        
+        print(f"  → 下载视频: {url}")
+        
+        response = requests.get(url, timeout=120)
+        response.raise_for_status()
+        
+        return response.content
+    
+    except Exception as e:
+        print(f"下载视频失败: {e}")
         return None
 
 # ===== API路由 =====
@@ -954,7 +1049,7 @@ def handle_image_generation(prompt_text, model, stream, data):
         return jsonify({"error": f"生成失败: {str(e)}"}), 500
 
 def handle_video_t2v(prompt_text, model, stream, data):
-    """处理文生视频（竖屏）"""
+    """处理文生视频（竖屏）- 使用ComfyUI直连"""
     global t2v_count
     
     print(f"🎬 处理文生视频请求")
@@ -978,44 +1073,37 @@ def handle_video_t2v(prompt_text, model, stream, data):
         workflow = json.loads(json.dumps(T2V_WORKFLOW))
         seed = random.randint(1, 999999999999999)
         
+        # 更新工作流参数
         if "89" in workflow:
             workflow["89"]["inputs"]["text"] = prompt_text
         if "74" in workflow:
             workflow["74"]["inputs"]["width"] = 480
             workflow["74"]["inputs"]["height"] = 832
             workflow["74"]["inputs"]["length"] = 81
-        if "78" in workflow:
-            workflow["78"]["inputs"]["noise_seed"] = seed
         if "81" in workflow:
             workflow["81"]["inputs"]["noise_seed"] = seed
         
-        payload = {"input": {"workflow": workflow}}
+        print(f"📤 提交到ComfyUI视频端点")
         
-        endpoint_id = RUNPOD_ENDPOINTS["portrait_t2v"]
-        endpoint_key = "portrait_t2v"
-        api_key = ENDPOINT_API_KEYS[endpoint_key]
-        
-        print(f"📤 提交到RunPod端点: {endpoint_id}")
-        
-        # 提交任务
+        # 提交任务到ComfyUI
         try:
-            job_data = runpod_submit(payload, endpoint_id, api_key)
-            job_id = job_data.get("id")
+            result = submit_video_to_comfyui(workflow)
+            prompt_id = result.get("prompt_id")
             
-            if not job_id:
-                print(f"❌ RunPod返回无效的job_id")
-                log_request("video_t2v", "failed", {"error": "No job_id"})
-                return jsonify({"error": "RunPod提交失败：未获取到任务ID"}), 500
+            if not prompt_id:
+                print(f"❌ ComfyUI返回无效的prompt_id")
+                log_request("video_t2v", "failed", {"error": "No prompt_id"})
+                return jsonify({"error": "ComfyUI提交失败：未获取到任务ID"}), 500
             
-            print(f"✅ 文生视频任务已提交: {job_id}")
+            print(f"✅ 文生视频任务已提交: {prompt_id}")
         except Exception as submit_error:
-            print(f"❌ RunPod提交失败: {submit_error}")
+            print(f"❌ ComfyUI提交失败: {submit_error}")
             log_request("video_t2v", "failed", {"error": str(submit_error)})
-            return jsonify({"error": f"RunPod提交失败: {str(submit_error)}"}), 500
+            return jsonify({"error": f"ComfyUI提交失败: {str(submit_error)}"}), 500
         
         # 使用流式响应
         def generate_video_stream():
-            response_id = f"chatcmpl-{job_id}"
+            response_id = f"chatcmpl-{prompt_id}"
             created_ts = int(time.time())
             
             # 发送初始消息
@@ -1033,7 +1121,7 @@ def handle_video_t2v(prompt_text, model, stream, data):
             last_status = "IN_QUEUE"
             
             while time.time() - start_time < VIDEO_TIMEOUT:
-                status_data = runpod_status(job_id, endpoint_id, api_key)
+                status_data = check_comfyui_video_status(prompt_id)
                 if not status_data:
                     time.sleep(3)
                     # 发送心跳
@@ -1079,24 +1167,22 @@ def handle_video_t2v(prompt_text, model, stream, data):
                     yield f"data: {json.dumps(keepalive_chunk, ensure_ascii=False)}\n\n"
                 
                 if status == "COMPLETED":
-                    output = status_data.get("output")
+                    outputs = status_data.get("outputs")
                     output_url = ""
                     
-                    if output and isinstance(output, dict):
-                        images = output.get("images", [])
-                        if images:
-                            img_data = images[0]
-                            b64_data = img_data.get("data")
-                            if b64_data:
-                                out_filename = f"{job_id}.mp4"
-                                out_path = os.path.join(IMAGES_DIR, out_filename)
-                                with open(out_path, "wb") as f:
-                                    f.write(base64.b64decode(b64_data))
-                                
-                                host = request.host_url.rstrip('/')
-                                output_url = f"{host}/files/images/{out_filename}"
+                    if outputs:
+                        # 下载视频 - 与图片提取方式一致
+                        video_data = download_comfyui_video(outputs)
+                        if video_data:
+                            out_filename = f"{prompt_id}.mp4"
+                            out_path = os.path.join(IMAGES_DIR, out_filename)
+                            with open(out_path, "wb") as f:
+                                f.write(video_data)
+                            
+                            host = request.host_url.rstrip('/')
+                            output_url = f"{host}/files/images/{out_filename}"
                     
-                    log_request("video_t2v", "success", {"job_id": job_id})
+                    log_request("video_t2v", "success", {"prompt_id": prompt_id})
                     
                     content = f"✅ 视频生成成功！\n\n🎬 [点击这里]({output_url})\n\n访问链接: {output_url}" if output_url else "⚠️ 生成完成但无法获取视频"
                     
@@ -1112,10 +1198,10 @@ def handle_video_t2v(prompt_text, model, stream, data):
                     yield "data: [DONE]\n\n"
                     return
                 
-                elif status in ["FAILED", "CANCELLED"]:
+                elif status == "FAILED":
                     log_request("video_t2v", "failed", {"status": status})
                     
-                    fail_msg = '\n\n❌ 视频生成失败，请检查输入内容后重试。' if status == "FAILED" else '\n\n⚠️ 任务已被取消。'
+                    fail_msg = '\n\n❌ 视频生成失败，请检查输入内容后重试。'
                     fail_chunk = {
                         'id': response_id,
                         'object': 'chat.completion.chunk',
@@ -1157,7 +1243,7 @@ def handle_video_t2v(prompt_text, model, stream, data):
         t2v_semaphore.release()
 
 def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
-    """处理图生视频（竖屏）"""
+    """处理图生视频（竖屏）- 使用ComfyUI直连"""
     global i2v_count
     
     if not input_image_base64:
@@ -1179,50 +1265,53 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
         workflow = json.loads(json.dumps(I2V_WORKFLOW))
         seed = random.randint(1, 999999999999999)
         
+        # 更新工作流参数
         if "93" in workflow:
             workflow["93"]["inputs"]["text"] = prompt_text
         if "98" in workflow:
             workflow["98"]["inputs"]["width"] = 480
             workflow["98"]["inputs"]["height"] = 832
             workflow["98"]["inputs"]["length"] = 81
-        
-        image_filename = f"i2v_input_{uuid.uuid4().hex}.png"
-        
-        payload = {
-            "input": {
-                "workflow": workflow,
-                "images": [{
-                    "name": image_filename,
-                    "image": input_image_base64
-                }]
-            }
-        }
-        
-        if "97" in workflow:
-            workflow["97"]["inputs"]["image"] = image_filename
-        
-        if "85" in workflow:
-            workflow["85"]["inputs"]["noise_seed"] = seed
         if "86" in workflow:
             workflow["86"]["inputs"]["noise_seed"] = seed
         
-        endpoint_id = RUNPOD_ENDPOINTS["portrait_i2v"]
-        endpoint_key = "portrait_i2v"
-        api_key = ENDPOINT_API_KEYS[endpoint_key]
+        # 保存输入图片到本地并上传到ComfyUI
+        image_filename = f"i2v_input_{uuid.uuid4().hex}.png"
+        image_path = os.path.join(IMAGES_DIR, image_filename)
         
-        # 提交任务
-        job_data = runpod_submit(payload, endpoint_id, api_key)
-        job_id = job_data.get("id")
+        # 解码base64图片
+        import base64
+        image_data = base64.b64decode(input_image_base64)
         
-        if not job_id:
-            log_request("video_i2v", "failed", {"error": "No job_id"})
-            return jsonify({"error": "提交失败"}), 500
+        # 保存到本地（用于后续清理）
+        with open(image_path, "wb") as f:
+            f.write(image_data)
         
-        print(f"图生视频任务已提交: {job_id}")
+        # 上传图片到ComfyUI服务器
+        uploaded_filename = upload_image_to_comfyui(image_data, image_filename)
+        
+        # 更新工作流中的图片引用
+        if "97" in workflow:
+            workflow["97"]["inputs"]["image"] = uploaded_filename
+        
+        # 提交任务到ComfyUI
+        try:
+            result = submit_video_to_comfyui(workflow)
+            prompt_id = result.get("prompt_id")
+        
+            if not prompt_id:
+                log_request("video_i2v", "failed", {"error": "No prompt_id"})
+                return jsonify({"error": "ComfyUI提交失败"}), 500
+        
+            print(f"✅ 图生视频任务已提交: {prompt_id}")
+        except Exception as submit_error:
+            print(f"❌ ComfyUI提交失败: {submit_error}")
+            log_request("video_i2v", "failed", {"error": str(submit_error)})
+            return jsonify({"error": f"ComfyUI提交失败: {str(submit_error)}"}), 500
         
         # 使用流式响应
         def generate_i2v_stream():
-            response_id = f"chatcmpl-{job_id}"
+            response_id = f"chatcmpl-{prompt_id}"
             created_ts = int(time.time())
             
             # 发送初始消息
@@ -1240,7 +1329,7 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
             last_status = "IN_QUEUE"
             
             while time.time() - start_time < VIDEO_TIMEOUT:
-                status_data = runpod_status(job_id, endpoint_id, api_key)
+                status_data = check_comfyui_video_status(prompt_id)
                 if not status_data:
                     time.sleep(3)
                     # 发送心跳
@@ -1286,24 +1375,22 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
                     yield f"data: {json.dumps(keepalive_chunk, ensure_ascii=False)}\n\n"
                 
                 if status == "COMPLETED":
-                    output = status_data.get("output")
+                    outputs = status_data.get("outputs")
                     output_url = ""
                     
-                    if output and isinstance(output, dict):
-                        images = output.get("images", [])
-                        if images:
-                            img_data = images[0]
-                            b64_data = img_data.get("data")
-                            if b64_data:
-                                out_filename = f"{job_id}.mp4"
-                                out_path = os.path.join(IMAGES_DIR, out_filename)
-                                with open(out_path, "wb") as f:
-                                    f.write(base64.b64decode(b64_data))
-                                
-                                host = request.host_url.rstrip('/')
-                                output_url = f"{host}/files/images/{out_filename}"
+                    if outputs:
+                        # 下载视频 - 与图片提取方式一致
+                        video_data = download_comfyui_video(outputs)
+                        if video_data:
+                            out_filename = f"{prompt_id}.mp4"
+                            out_path = os.path.join(IMAGES_DIR, out_filename)
+                            with open(out_path, "wb") as f:
+                                f.write(video_data)
+                            
+                            host = request.host_url.rstrip('/')
+                            output_url = f"{host}/files/images/{out_filename}"
                     
-                    log_request("video_i2v", "success", {"job_id": job_id})
+                    log_request("video_i2v", "success", {"prompt_id": prompt_id})
                     
                     content = f"✅ 视频生成成功！\n\n🎬 [点击这里]({output_url})\n\n访问链接: {output_url}" if output_url else "⚠️ 生成完成但无法获取视频"
                     
@@ -1319,10 +1406,10 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
                     yield "data: [DONE]\n\n"
                     return
                 
-                elif status in ["FAILED", "CANCELLED"]:
+                elif status == "FAILED":
                     log_request("video_i2v", "failed", {"status": status})
                     
-                    fail_msg = '\n\n❌ 视频生成失败，请检查输入内容后重试。' if status == "FAILED" else '\n\n⚠️ 任务已被取消。'
+                    fail_msg = '\n\n❌ 视频生成失败，请检查输入内容后重试。'
                     fail_chunk = {
                         'id': response_id,
                         'object': 'chat.completion.chunk',
@@ -1359,6 +1446,13 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
         log_request("video_i2v", "failed", {"error": str(e)})
         return jsonify({"error": f"生成失败: {str(e)}"}), 500
     finally:
+        # 清理临时图片文件
+        try:
+            if os.path.exists(image_path):
+                os.remove(image_path)
+        except:
+            pass
+        
         with count_lock:
             i2v_count -= 1
         i2v_semaphore.release()
