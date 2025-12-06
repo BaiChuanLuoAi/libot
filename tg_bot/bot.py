@@ -685,54 +685,62 @@ async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db.get_or_create_user(user.id, user.username, user.first_name)
     
-    result = db.daily_checkin(user.id)
-    
-    if result['success']:
-        reward = result['reward']
-        streak = result['streak']
-        new_balance = db.get_credits(user.id)
+    try:
+        result = db.daily_checkin(user.id)
         
-        # 计算距离免费视频还差多少
-        needed_for_video = max(0, COST_VIDEO - new_balance)
-        days_to_video = max(0, (needed_for_video + CHECKIN_REWARD - 1) // CHECKIN_REWARD)
+        if result['success']:
+            reward = result['reward']
+            streak = result['streak']
+            new_balance = db.get_credits(user.id)
+            
+            # 计算距离免费视频还差多少
+            needed_for_video = max(0, COST_VIDEO - new_balance)
+            days_to_video = max(0, (needed_for_video + CHECKIN_REWARD - 1) // CHECKIN_REWARD)
+            
+            # Streak emoji progression
+            if streak >= 7:
+                streak_emoji = "🔥🔥🔥"
+            elif streak >= 3:
+                streak_emoji = "🔥🔥"
+            else:
+                streak_emoji = "🔥"
+            
+            message = (
+                f"✅ **Check-in Successful!**\n\n"
+                f"You got **+{reward} Credits**.\n\n"
+                f"📅 Streak: **{streak} Day{'s' if streak > 1 else ''}** {streak_emoji}\n"
+                f"💰 Balance: **{new_balance} Credits**\n\n"
+            )
+            
+            if new_balance >= COST_VIDEO:
+                message += f"🎉 **UNLOCKED!** You can make a video now!\n💡 Use /roll first, then animate it!\n"
+            else:
+                message += f"📉 Only **{needed_for_video} Credits** left until your first Video!\n"
+                if days_to_video > 0:
+                    message += f"🎯 **{days_to_video} more day{'s' if days_to_video > 1 else ''}** = FREE Video!\n"
+            
+            message += f"\n⏰ Come back tomorrow!"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
         
-        # Streak emoji progression
-        if streak >= 7:
-            streak_emoji = "🔥🔥🔥"
-        elif streak >= 3:
-            streak_emoji = "🔥🔥"
+        elif result['message'] == 'already_checked':
+            streak = result['streak']
+            message = (
+                f"⏰ **Already checked in today!**\n\n"
+                f"🔥 Current streak: **{streak} days**\n\n"
+                f"_Come back tomorrow for {CHECKIN_REWARD} more credits!_"
+            )
+            await update.message.reply_text(message, parse_mode='Markdown')
+        
         else:
-            streak_emoji = "🔥"
-        
-        message = (
-            f"✅ **Check-in Successful!**\n\n"
-            f"You got **+{reward} Credits**.\n\n"
-            f"📅 Streak: **{streak} Day{'s' if streak > 1 else ''}** {streak_emoji}\n"
-            f"💰 Balance: **{new_balance} Credits**\n\n"
+            await update.message.reply_text("❌ Check-in failed. Please try again.")
+    except Exception as e:
+        logger.error(f"Check-in error for user {user.id}: {e}")
+        import traceback
+        traceback.print_exc()
+        await update.message.reply_text(
+            "❌ An error occurred during check-in. Please contact admin if this persists."
         )
-        
-        if new_balance >= COST_VIDEO:
-            message += f"🎉 **UNLOCKED!** You can make a video now!\n💡 Use /roll first, then animate it!\n"
-        else:
-            message += f"📉 Only **{needed_for_video} Credits** left until your first Video!\n"
-            if days_to_video > 0:
-                message += f"🎯 **{days_to_video} more day{'s' if days_to_video > 1 else ''}** = FREE Video!\n"
-        
-        message += f"\n⏰ Come back tomorrow!"
-        
-        await update.message.reply_text(message, parse_mode='Markdown')
-    
-    elif result['message'] == 'already_checked':
-        streak = result['streak']
-        message = (
-            f"⏰ **Already checked in today!**\n\n"
-            f"🔥 Current streak: **{streak} days**\n\n"
-            f"_Come back tomorrow for {CHECKIN_REWARD} more credits!_"
-        )
-        await update.message.reply_text(message, parse_mode='Markdown')
-    
-    else:
-        await update.message.reply_text("❌ Check-in failed. Please try again.")
 
 
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -980,7 +988,11 @@ async def add_credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             target_user = cursor.fetchone()
             
             if not target_user:
-                await update.message.reply_text(f"❌ User `{target_user_id}` not found in database.")
+                await update.message.reply_text(
+                    f"❌ User `{target_user_id}` not found in database.\n"
+                    "_The user needs to /start the bot first._",
+                    parse_mode='Markdown'
+                )
                 return
         
         # Add credits
@@ -1008,13 +1020,81 @@ async def add_credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                     ),
                     parse_mode='Markdown'
                 )
-            except:
-                pass  # User may have blocked the bot
+            except Exception as notify_error:
+                logger.warning(f"Failed to notify user {target_user_id}: {notify_error}")
+                # Don't fail the command if notification fails
         else:
             await update.message.reply_text("❌ Failed to add credits. Please try again.")
     
     except ValueError:
         await update.message.reply_text("❌ Invalid arguments. Both user_id and amount must be numbers.")
+    except Exception as e:
+        logger.error(f"Error in add_credits: {e}")
+        import traceback
+        traceback.print_exc()
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
+async def delete_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /delete_user command - Delete a user (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        return
+    
+    # Parse arguments
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "❌ <b>Usage:</b> <code>/delete_user [user_id]</code>\n"
+            "<b>Example:</b> <code>/delete_user 123456789</code>\n"
+            "⚠️ This will permanently delete the user and all their data!",
+            parse_mode='HTML'
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+        
+        # Check if target user exists
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT first_name, username FROM users WHERE user_id = ?", (target_user_id,))
+            target_user = cursor.fetchone()
+            
+            if not target_user:
+                await update.message.reply_text(f"❌ User <code>{target_user_id}</code> not found.", parse_mode='HTML')
+                return
+            
+            # Delete user's transactions first
+            cursor.execute("DELETE FROM transactions WHERE user_id = ?", (target_user_id,))
+            deleted_txs = cursor.rowcount
+            
+            # Delete user
+            cursor.execute("DELETE FROM users WHERE user_id = ?", (target_user_id,))
+            
+            import html
+            first_name = html.escape(target_user['first_name'] or "Unknown")
+            username_text = f"@{target_user['username']}" if target_user['username'] else "no username"
+            
+            await update.message.reply_text(
+                f"✅ <b>User Deleted</b>\n\n"
+                f"👤 Name: {first_name}\n"
+                f"🆔 ID: <code>{target_user_id}</code>\n"
+                f"👤 Username: {username_text}\n"
+                f"🗑️ Deleted {deleted_txs} transactions",
+                parse_mode='HTML'
+            )
+            
+            logger.info(f"Admin {user.id} deleted user {target_user_id}")
+        
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user_id. Must be a number.")
+    except Exception as e:
+        logger.error(f"Error deleting user: {e}")
+        import traceback
+        traceback.print_exc()
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1055,8 +1135,9 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/view_user [user_id]` - 查看用户详情\n"
             "• `/view_orders [user_id]` - 查看用户订单\n"
             "• `/stats` - 详细统计信息\n"
-            "• `/broadcast [message]` - 广播消息\n"
-            "• `/list_users [limit]` - 列出最近用户\n\n"
+            "• `/list_users [limit]` - 列出最近用户\n"
+            "• `/delete_user [user_id]` - 删除测试用户\n"
+            "• `/broadcast [message]` - 广播消息\n\n"
             
             "_Real-time data from database_"
         )
@@ -1424,23 +1505,30 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("No users found.")
             return
         
-        message = f"👥 **Latest {len(users)} Users**\n\n"
+        # Build message
+        import html
+        message = f"👥 <b>Latest {len(users)} Users</b>\n\n"
         
         for u in users:
-            username = f"@{u['username']}" if u['username'] else "no username"
+            # Escape HTML special characters
+            first_name = html.escape(u['first_name'] or "Unknown")
+            username_text = f"@{u['username']}" if u['username'] else "无用户名"
             created = u['created_at'][:10] if u['created_at'] else "Unknown"
+            
             message += (
-                f"• **{u['first_name']}** ({username})\n"
-                f"  ID: `{u['user_id']}` | 💎 {u['credits']} | ✅ {u['total_checkins']}\n"
+                f"• {first_name} ({username_text})\n"
+                f"  ID: <code>{u['user_id']}</code> | 💎 {u['credits']} | ✅ {u['total_checkins']}\n"
                 f"  📅 {created}\n\n"
             )
         
-        message += f"_Use `/view_user [id]` for details_"
+        message += f"<i>Use /view_user [id] for details</i>"
         
-        await update.message.reply_text(message, parse_mode='Markdown')
+        await update.message.reply_text(message, parse_mode='HTML')
         
     except Exception as e:
         logger.error(f"Error listing users: {e}")
+        import traceback
+        traceback.print_exc()
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
@@ -1648,6 +1736,7 @@ async def post_init(application: Application):
         BotCommand("view_orders", "📋 View User Orders"),
         BotCommand("list_users", "👥 List Recent Users"),
         BotCommand("add_credits", "💎 Add Credits to User"),
+        BotCommand("delete_user", "🗑️ Delete User"),
         BotCommand("broadcast", "📢 Broadcast Message"),
     ]
     
@@ -1708,6 +1797,7 @@ def main():
     application.add_handler(CommandHandler("view_orders", view_orders_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("list_users", list_users_command))
+    application.add_handler(CommandHandler("delete_user", delete_user_command))
     
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(check_join_status_callback, pattern="^check_join_status$"))

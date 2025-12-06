@@ -72,20 +72,53 @@ class Database:
             self._migrate_schema(cursor)
             
             logger.info("Database initialized successfully")
+        
+        # Create compatibility views (outside the connection context)
+        self.create_credit_history_table()
+        self.create_payments_table()
     
     def _migrate_schema(self, cursor):
         """Migrate database schema to add missing columns."""
         try:
-            # Check if invited_by column exists
+            # Check existing columns
             cursor.execute("PRAGMA table_info(users)")
             columns = [column[1] for column in cursor.fetchall()]
             
+            # Add missing columns one by one
             if 'invited_by' not in columns:
                 logger.info("Adding missing 'invited_by' column to users table")
                 cursor.execute("ALTER TABLE users ADD COLUMN invited_by INTEGER")
                 logger.info("Successfully added 'invited_by' column")
+            
+            if 'last_checkin' not in columns:
+                logger.info("Adding missing 'last_checkin' column to users table")
+                cursor.execute("ALTER TABLE users ADD COLUMN last_checkin DATE")
+                logger.info("Successfully added 'last_checkin' column")
+            
+            if 'checkin_streak' not in columns:
+                logger.info("Adding missing 'checkin_streak' column to users table")
+                cursor.execute("ALTER TABLE users ADD COLUMN checkin_streak INTEGER DEFAULT 0")
+                logger.info("Successfully added 'checkin_streak' column")
+            
+            if 'total_checkins' not in columns:
+                logger.info("Adding missing 'total_checkins' column to users table")
+                cursor.execute("ALTER TABLE users ADD COLUMN total_checkins INTEGER DEFAULT 0")
+                logger.info("Successfully added 'total_checkins' column")
+            
+            if 'created_at' not in columns:
+                logger.info("Adding missing 'created_at' column to users table")
+                cursor.execute("ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                logger.info("Successfully added 'created_at' column")
+            
+            if 'last_used' not in columns:
+                logger.info("Adding missing 'last_used' column to users table")
+                cursor.execute("ALTER TABLE users ADD COLUMN last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                logger.info("Successfully added 'last_used' column")
+                
         except Exception as e:
             logger.error(f"Schema migration error: {e}")
+            import traceback
+            traceback.print_exc()
     
     def get_or_create_user(self, user_id: int, username: str = None, 
                           first_name: str = None, invited_by: int = None) -> dict:
@@ -400,4 +433,51 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("SELECT user_id FROM users")
             return [row['user_id'] for row in cursor.fetchall()]
+    
+    # ===== Alias for credit_history table =====
+    
+    def create_credit_history_table(self):
+        """Create credit_history table as an alias view for transactions (for backward compatibility)."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                # Drop existing view if exists
+                cursor.execute("DROP VIEW IF EXISTS credit_history")
+                # Create view
+                cursor.execute("""
+                    CREATE VIEW credit_history AS
+                    SELECT id, user_id, amount, operation as reason, description, timestamp
+                    FROM transactions
+                """)
+                logger.info("Created credit_history view")
+        except Exception as e:
+            logger.error(f"Error creating credit_history view: {e}")
+    
+    def create_payments_table(self):
+        """Create payments table as an alias view for transactions (for backward compatibility)."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                # Drop existing view if exists
+                cursor.execute("DROP VIEW IF EXISTS payments")
+                # Create view
+                cursor.execute("""
+                    CREATE VIEW payments AS
+                    SELECT 
+                        id as payment_id,
+                        user_id,
+                        amount,
+                        money_amount,
+                        currency,
+                        status,
+                        provider,
+                        external_ref,
+                        timestamp as created_at,
+                        CASE WHEN status = 'completed' THEN timestamp ELSE NULL END as completed_at
+                    FROM transactions
+                    WHERE money_amount IS NOT NULL
+                """)
+                logger.info("Created payments view")
+        except Exception as e:
+            logger.error(f"Error creating payments view: {e}")
 
