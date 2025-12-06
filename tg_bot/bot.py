@@ -913,14 +913,15 @@ async def add_credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # Check if user is admin
     if user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ You don't have permission to use this command.")
+        # Silently ignore for non-admins (don't reveal the command exists)
         return
     
     # Parse arguments
     if len(context.args) != 2:
         await update.message.reply_text(
-            "Usage: /add_credits [user_id] [amount]\n"
-            "Example: /add_credits 123456789 100"
+            "❌ **Usage:** `/add_credits [user_id] [amount]`\n"
+            "**Example:** `/add_credits 123456789 100`",
+            parse_mode='Markdown'
         )
         return
     
@@ -932,20 +933,194 @@ async def add_credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Amount must be positive.")
             return
         
+        # Check if target user exists
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT first_name FROM users WHERE user_id = ?", (target_user_id,))
+            target_user = cursor.fetchone()
+            
+            if not target_user:
+                await update.message.reply_text(f"❌ User `{target_user_id}` not found in database.")
+                return
+        
         # Add credits
         success = db.add_credits(target_user_id, amount, f"Admin top-up by {user.id}")
         
         if success:
             new_balance = db.get_credits(target_user_id)
             await update.message.reply_text(
-                f"✅ Successfully added {amount} credits to user {target_user_id}.\n"
-                f"New balance: {new_balance} credits"
+                f"✅ **Credits Added**\n\n"
+                f"👤 User: `{target_user_id}`\n"
+                f"💎 Amount: **+{amount} credits**\n"
+                f"💰 New Balance: **{new_balance} credits**",
+                parse_mode='Markdown'
             )
+            
+            # Notify the user (optional)
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=(
+                        f"🎁 **Admin Gift!**\n\n"
+                        f"You received **{amount} credits** from admin!\n"
+                        f"💰 New Balance: **{new_balance} credits**\n\n"
+                        f"Use /balance to check your account."
+                    ),
+                    parse_mode='Markdown'
+                )
+            except:
+                pass  # User may have blocked the bot
         else:
-            await update.message.reply_text("❌ Failed to add credits. User may not exist.")
+            await update.message.reply_text("❌ Failed to add credits. Please try again.")
     
     except ValueError:
         await update.message.reply_text("❌ Invalid arguments. Both user_id and amount must be numbers.")
+
+
+async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /admin command - Show admin dashboard (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        # Silently ignore for non-admins
+        return
+    
+    try:
+        # Get statistics from database
+        total_users = db.get_user_count()
+        new_today = db.get_new_users_today()
+        daily_revenue = db.get_daily_revenue()
+        total_revenue = db.get_total_revenue()
+        
+        # Get current task queue info (placeholder - would need actual queue system)
+        # For now, we'll just show 0
+        queue_length = 0
+        
+        stats_msg = (
+            "📈 **Lili AI - Admin Dashboard**\n\n"
+            "👥 **Users:**\n"
+            f"• Total Users: **{total_users}**\n"
+            f"• New Today: **{new_today}** 🆕\n\n"
+            
+            "💰 **Revenue:**\n"
+            f"• Today: **${daily_revenue:.2f}**\n"
+            f"• Total: **${total_revenue:.2f}**\n\n"
+            
+            "⚙️ **System:**\n"
+            f"• Queue Length: **{queue_length}** tasks\n\n"
+            
+            "🛠 **Admin Commands:**\n"
+            "• `/add_credits [user_id] [amount]`\n"
+            "• `/broadcast [message]`\n"
+            "• `/support` - Support info\n\n"
+            
+            "_Real-time data from database_"
+        )
+        
+        await update.message.reply_text(stats_msg, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Admin dashboard error: {e}")
+        await update.message.reply_text(
+            "❌ Error loading dashboard. Check logs for details."
+        )
+
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /broadcast command - Send message to all users (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        # Silently ignore for non-admins
+        return
+    
+    # Get message
+    if not context.args:
+        await update.message.reply_text(
+            "❌ **Usage:** `/broadcast [message]`\n"
+            "**Example:** `/broadcast 🎉 New feature available! Try /roll now!`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    message = ' '.join(context.args)
+    
+    # Confirm before sending
+    await update.message.reply_text(
+        f"🚀 **Starting broadcast...**\n\n"
+        f"Message:\n{message}\n\n"
+        f"_Sending to all users..._"
+    )
+    
+    # Get all user IDs
+    all_users = db.get_all_user_ids()
+    
+    success_count = 0
+    failed_count = 0
+    
+    for uid in all_users:
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=message,
+                parse_mode='Markdown'
+            )
+            success_count += 1
+            
+            # Add delay to prevent Telegram rate limiting
+            await asyncio.sleep(0.05)  # 50ms delay between messages
+            
+        except Exception as e:
+            # User may have blocked the bot or deleted their account
+            failed_count += 1
+            logger.debug(f"Failed to send broadcast to {uid}: {e}")
+    
+    # Send summary
+    await update.message.reply_text(
+        f"✅ **Broadcast Complete!**\n\n"
+        f"📤 Sent: **{success_count}** users\n"
+        f"❌ Failed: **{failed_count}** users\n"
+        f"👥 Total: **{len(all_users)}** users",
+        parse_mode='Markdown'
+    )
+
+
+async def support_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /support command - Show support contact info."""
+    user = update.effective_user
+    
+    # Admin username (hardcoded)
+    SUPPORT_USERNAME = "XiangFengZhiNai"
+    
+    msg = (
+        "🆘 **Lili AI Support Center**\n\n"
+        "Having issues with payments or generation?\n"
+        "Found a bug or have suggestions?\n\n"
+        f"👨‍💻 **Contact Admin:** @{SUPPORT_USERNAME}\n"
+        "_(Click the username to open chat)_\n\n"
+        "💡 **Tip:** When contacting support, please include:\n"
+        f"🆔 Your User ID: `{user.id}`\n\n"
+        "_Copy your ID and send it to admin for faster help!_"
+    )
+    
+    # Create button for direct message
+    keyboard = [[
+        InlineKeyboardButton(
+            "💬 Contact Admin",
+            url=f"https://t.me/{SUPPORT_USERNAME}"
+        )
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        msg,
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -969,6 +1144,7 @@ async def post_init(application: Application):
         BotCommand("balance", "💰 Check your credits & stats"),
         BotCommand("invite", "👥 Invite friends, earn credits"),
         BotCommand("buy", "💳 Buy credit packages"),
+        BotCommand("support", "🆘 Contact support / report issues"),
         BotCommand("help", "❓ How to use this bot"),
     ]
     
@@ -1006,7 +1182,12 @@ def main():
     application.add_handler(CommandHandler("invite", invite_command))
     application.add_handler(CommandHandler("roll", roll))
     application.add_handler(CommandHandler("buy", buy_command))
+    application.add_handler(CommandHandler("support", support_command))
+    
+    # Admin commands (hidden from menu, only work for admins)
+    application.add_handler(CommandHandler("admin", admin_dashboard))
     application.add_handler(CommandHandler("add_credits", add_credits_command))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
     
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(video_callback, pattern="^video:"))

@@ -328,4 +328,58 @@ class Database:
                 'streak': new_streak,
                 'message': 'success'
             }
+    
+    # ===== Admin Statistics Functions =====
+    
+    def get_user_count(self) -> int:
+        """Get total number of users."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM users")
+            return cursor.fetchone()['count']
+    
+    def get_new_users_today(self) -> int:
+        """Get number of new users registered today."""
+        from datetime import date
+        today = date.today().isoformat()
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) as count FROM users WHERE DATE(created_at) = ?",
+                (today,)
+            )
+            return cursor.fetchone()['count']
+    
+    def get_daily_revenue(self) -> float:
+        """Get total revenue (money) today."""
+        from datetime import date
+        today = date.today().isoformat()
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COALESCE(SUM(money_amount), 0) as total
+                FROM transactions
+                WHERE DATE(timestamp) = ? AND status = 'completed' AND money_amount IS NOT NULL
+            """, (today,))
+            return cursor.fetchone()['total']
+    
+    def get_total_revenue(self) -> float:
+        """Get total revenue (money) all time."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COALESCE(SUM(money_amount), 0) as total
+                FROM transactions
+                WHERE status = 'completed' AND money_amount IS NOT NULL
+            """)
+            return cursor.fetchone()['total']
+    
+    def get_all_user_ids(self) -> list:
+        """Get all user IDs for broadcasting."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM users")
+            return [row['user_id'] for row in cursor.fetchall()]
 

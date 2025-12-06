@@ -68,6 +68,10 @@ PLISIO_SECRET_KEY = os.getenv('PLISIO_SECRET_KEY', '')
 # Telegram Bot Token (用于发送通知)
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 
+# Admin IDs for notifications
+ADMIN_IDS_STR = os.getenv('ADMIN_IDS', '')
+ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(',') if id.strip()] if ADMIN_IDS_STR else []
+
 # ComfyUI 直接API配置（图像生成）
 COMFYUI_API_URL = "http://dx.qyxc.vip:18188"  # ComfyUI服务器地址
 COMFYUI_CLIENT_ID = str(uuid.uuid4())
@@ -559,6 +563,24 @@ def send_telegram_notification(user_id: int, message: str):
         print(f"Failed to send TG notification: {e}")
 
 
+def notify_admin(message: str):
+    """发送通知给所有管理员"""
+    if not TELEGRAM_BOT_TOKEN or not ADMIN_IDS:
+        return
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    
+    for admin_id in ADMIN_IDS:
+        try:
+            requests.post(url, json={
+                "chat_id": admin_id,
+                "text": message,
+                "parse_mode": "Markdown"
+            }, timeout=5)
+        except Exception as e:
+            print(f"Failed to send admin notification to {admin_id}: {e}")
+
+
 @app.route('/webhooks/plisio', methods=['POST', 'GET'])
 def webhook_plisio():
     """处理 Plisio 支付回调"""
@@ -657,7 +679,7 @@ def webhook_plisio():
             if success:
                 print(f"✅ Added {credits} credits to user {user_id}")
                 
-                # 发送 Telegram 通知
+                # 发送 Telegram 通知给用户
                 send_telegram_notification(
                     user_id,
                     f"💰 **Payment Successful!**\n\n"
@@ -666,6 +688,18 @@ def webhook_plisio():
                     f"📋 Order: `{order_id}`\n\n"
                     f"🎉 Your credits have been added!\n"
                     f"Use /balance to check your balance."
+                )
+                
+                # 🔔 通知管理员（实时入账通知）
+                notify_admin(
+                    f"💰 **NEW SALE!** 💰\n\n"
+                    f"👤 User: `{user_id}`\n"
+                    f"💵 Amount: **${amount} {currency}**\n"
+                    f"💎 Credits: **{credits}**\n"
+                    f"💳 Method: `Plisio (Crypto)`\n"
+                    f"📦 Package: `{package['name']}`\n"
+                    f"📋 Order: `{order_id}`\n\n"
+                    f"🎉 Cha-ching! 💸"
                 )
                 
                 return jsonify({"status": "success", "credits_added": credits}), 200
