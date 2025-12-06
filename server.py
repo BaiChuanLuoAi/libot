@@ -77,7 +77,7 @@ COMFYUI_API_URL = "http://dx.qyxc.vip:18188"  # ComfyUI服务器地址
 COMFYUI_CLIENT_ID = str(uuid.uuid4())
 
 # ComfyUI 视频生成配置 - 直连端点（不再使用RunPod）
-COMFYUI_VIDEO_API_URL = "https://n006.unicorn.org.cn:10297"  # 视频生成专用ComfyUI端点
+COMFYUI_VIDEO_API_URL = "https://n008.unicorn.org.cn:20155"  # 视频生成专用ComfyUI端点
 COMFYUI_VIDEO_CLIENT_ID = str(uuid.uuid4())
 
 # 目录配置
@@ -634,6 +634,58 @@ def get_stats_history():
     return jsonify({
         "stats": all_stats,
         "total_days": len(all_stats)
+    })
+
+@app.route('/api/update_endpoint', methods=['POST'])
+def update_endpoint():
+    """更新ComfyUI端点（管理员功能）"""
+    # 验证API Key
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or auth_header.replace("Bearer ", "") != SERVER_AUTH_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    try:
+        data = request.json
+        endpoint_type = data.get('type')  # 'image' or 'video'
+        new_url = data.get('url')
+        
+        if not endpoint_type or not new_url:
+            return jsonify({"error": "Missing type or url"}), 400
+        
+        if endpoint_type not in ['image', 'video']:
+            return jsonify({"error": "Invalid type. Must be 'image' or 'video'"}), 400
+        
+        # 更新全局变量
+        global COMFYUI_API_URL, COMFYUI_VIDEO_API_URL
+        
+        if endpoint_type == 'image':
+            COMFYUI_API_URL = new_url.rstrip('/')
+            print(f"✅ 图像ComfyUI端点已更新为: {COMFYUI_API_URL}")
+        elif endpoint_type == 'video':
+            COMFYUI_VIDEO_API_URL = new_url.rstrip('/')
+            print(f"✅ 视频ComfyUI端点已更新为: {COMFYUI_VIDEO_API_URL}")
+        
+        return jsonify({
+            "success": True,
+            "type": endpoint_type,
+            "new_url": new_url.rstrip('/')
+        })
+    
+    except Exception as e:
+        print(f"更新端点错误: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/get_endpoints', methods=['GET'])
+def get_endpoints():
+    """获取当前ComfyUI端点（管理员功能）"""
+    # 验证API Key
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or auth_header.replace("Bearer ", "") != SERVER_AUTH_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    return jsonify({
+        "image_url": COMFYUI_API_URL,
+        "video_url": COMFYUI_VIDEO_API_URL
     })
 
 @app.route('/')

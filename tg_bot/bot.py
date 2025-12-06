@@ -1626,6 +1626,160 @@ async def support_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def set_comfyui_endpoint_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /set_endpoint command - Change ComfyUI endpoint (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        return
+    
+    # Parse arguments: /set_endpoint [type] [url]
+    # type: image or video
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ **Usage:** `/set_endpoint [type] [url]`\n\n"
+            "**Type:** `image` or `video`\n"
+            "**Example:** `/set_endpoint video https://n008.unicorn.org.cn:20155`\n"
+            "**Example:** `/set_endpoint image http://dx.qyxc.vip:18188`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    endpoint_type = context.args[0].lower()
+    new_url = context.args[1]
+    
+    if endpoint_type not in ['image', 'video']:
+        await update.message.reply_text(
+            "❌ Invalid type. Must be `image` or `video`.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Validate URL format
+    if not (new_url.startswith('http://') or new_url.startswith('https://')):
+        await update.message.reply_text(
+            "❌ Invalid URL format. Must start with `http://` or `https://`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Remove trailing slash
+    new_url = new_url.rstrip('/')
+    
+    try:
+        # Call server API to update endpoint
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            # Get server base URL from API_URL
+            import re
+            server_base = re.match(r'(https?://[^/]+)', API_URL)
+            if not server_base:
+                raise Exception("Cannot determine server base URL")
+            
+            update_url = f"{server_base.group(1)}/api/update_endpoint"
+            
+            payload = {
+                "type": endpoint_type,
+                "url": new_url
+            }
+            
+            async with session.post(
+                update_url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    await update.message.reply_text(
+                        f"✅ **ComfyUI Endpoint Updated**\n\n"
+                        f"📡 Type: **{endpoint_type.upper()}**\n"
+                        f"🔗 New URL: `{new_url}`\n\n"
+                        f"_Changes applied immediately!_",
+                        parse_mode='Markdown'
+                    )
+                    logger.info(f"Admin {user.id} updated {endpoint_type} endpoint to {new_url}")
+                else:
+                    error_text = await response.text()
+                    await update.message.reply_text(
+                        f"❌ Failed to update endpoint: {error_text}"
+                    )
+    
+    except Exception as e:
+        logger.error(f"Error updating endpoint: {e}")
+        import traceback
+        traceback.print_exc()
+        await update.message.reply_text(
+            f"❌ Error: {str(e)}\n\n"
+            "_Note: Make sure the server supports dynamic endpoint updates._",
+            parse_mode='Markdown'
+        )
+
+
+async def get_endpoints_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /get_endpoints command - Show current ComfyUI endpoints (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        return
+    
+    try:
+        # Call server API to get current endpoints
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            # Get server base URL from API_URL
+            import re
+            server_base = re.match(r'(https?://[^/]+)', API_URL)
+            if not server_base:
+                raise Exception("Cannot determine server base URL")
+            
+            get_url = f"{server_base.group(1)}/api/get_endpoints"
+            
+            async with session.get(
+                get_url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    image_url = result.get('image_url', 'Unknown')
+                    video_url = result.get('video_url', 'Unknown')
+                    
+                    await update.message.reply_text(
+                        f"📡 **Current ComfyUI Endpoints**\n\n"
+                        f"🖼️ **Image Generation:**\n"
+                        f"`{image_url}`\n\n"
+                        f"🎬 **Video Generation:**\n"
+                        f"`{video_url}`\n\n"
+                        f"💡 Use `/set_endpoint [type] [url]` to change",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    error_text = await response.text()
+                    await update.message.reply_text(
+                        f"❌ Failed to get endpoints: {error_text}"
+                    )
+    
+    except Exception as e:
+        logger.error(f"Error getting endpoints: {e}")
+        import traceback
+        traceback.print_exc()
+        await update.message.reply_text(
+            f"❌ Error: {str(e)}",
+            parse_mode='Markdown'
+        )
+
+
 async def check_join_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle '✅ I Have Joined' button callback - 验证用户是否真的加入了频道."""
     query = update.callback_query
@@ -1738,6 +1892,8 @@ async def post_init(application: Application):
         BotCommand("add_credits", "💎 Add Credits to User"),
         BotCommand("delete_user", "🗑️ Delete User"),
         BotCommand("broadcast", "📢 Broadcast Message"),
+        BotCommand("set_endpoint", "🔧 Set ComfyUI Endpoint"),
+        BotCommand("get_endpoints", "📡 Get Current Endpoints"),
     ]
     
     # Set default commands for all users
@@ -1798,6 +1954,8 @@ def main():
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("list_users", list_users_command))
     application.add_handler(CommandHandler("delete_user", delete_user_command))
+    application.add_handler(CommandHandler("set_endpoint", set_comfyui_endpoint_command))
+    application.add_handler(CommandHandler("get_endpoints", get_endpoints_command))
     
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(check_join_status_callback, pattern="^check_join_status$"))
