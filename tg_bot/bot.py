@@ -629,10 +629,14 @@ async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Fixed video prompts
-    video_prompt = "high quality, 4k, slow motion, loopable, heavy breathing, chest heaving, looking at viewer, blinking, slight smile, wind blowing hair, subtle body movement, soft lighting, hyperrealistic, detailed skin texture"
+    video_prompt = "masterpiece, best quality, ultra-detailed, absurdres, cinematic lighting, dynamic erotic pose, uncensored nsfw, highly dynamic motion, exaggerated perspective, depth of field, film grain, hyperrealistic skin, glistening body, intense arousal, sweat dripping, orgasmic expression, perfect anatomy, erotic fluids, surreal erotic atmosphere, breathtaking beauty, 8k uhd, raw photo, extreme motion blur, fluid motion, realistic physics, chaotic beauty, perfect motion trails"
+    video_negative_prompt = "bright colors, overexposed, static, blurred details, subtitles, style, artwork, painting, picture, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, malformed limbs, fused fingers, still picture, cluttered background, three legs, many people in the background, walking backwards, censored, mosaic, lowres, mutated, extra limbs, watermark, text, signature, blurry, grainy, artifacts, distortion, bad anatomy, poorly rendered genitals, unnatural skin tones, frozen frame, no motion"
+    
+    # Combine prompts for API
+    full_video_prompt = f"{video_prompt}\n\nNegative prompt: {video_negative_prompt}"
     
     # Call API with image base64 for i2v
-    result_url = await call_api(VIDEO_MODEL, video_prompt, timeout=300, image_base64=image_base64)
+    result_url = await call_api(VIDEO_MODEL, full_video_prompt, timeout=300, image_base64=image_base64)
     
     if result_url:
         # Delete status message
