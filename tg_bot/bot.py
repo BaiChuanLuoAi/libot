@@ -114,24 +114,51 @@ with open('prompts.json', 'r', encoding='utf-8') as f:
     PROMPTS = json.load(f)
 
 
-async def call_api(model: str, prompt: str, width: int = 832, height: int = 1216, timeout: int = 300) -> Optional[str]:
+async def call_api(model: str, prompt: str, width: int = 832, height: int = 1216, timeout: int = 300, image_base64: Optional[str] = None) -> Optional[str]:
     """
     Call the API Gateway to generate image or video.
     Returns the URL of the generated file or None on error.
     Default size: 832x1216 (Portrait)
     Handles streaming SSE responses from the API.
+    
+    Args:
+        model: Model name
+        prompt: Text prompt
+        width: Image width
+        height: Image height
+        timeout: Request timeout
+        image_base64: Base64 encoded image data (for i2v)
     """
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
     
+    # Build message content
+    if image_base64:
+        # For image-to-video, include both text and image
+        content = [
+            {
+                "type": "text",
+                "text": prompt
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{image_base64}"
+                }
+            }
+        ]
+    else:
+        # For text-only requests
+        content = prompt
+    
     payload = {
         "model": model,
         "messages": [
             {
                 "role": "user",
-                "content": prompt
+                "content": content
             }
         ],
         "width": width,
@@ -449,7 +476,7 @@ async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     full_prompt = f"{positive_prompt}\n\nNegative prompt: {negative_prompt}"
     
     # Call API
-    result_url = await call_api(IMAGE_MODEL_PORTRAIT, full_prompt, timeout=120)
+    result_url = await call_api(IMAGE_MODEL_PORTRAIT, full_prompt, timeout=120, image_base64=None)
     
     if result_url:
         # Delete status message
@@ -576,8 +603,36 @@ async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "_Worth the wait - trust me!_ 😉"
     )
     
-    # Call API with image URL as prompt for i2v
-    result_url = await call_api(VIDEO_MODEL, image_url, timeout=300)
+    # Download image and convert to base64
+    image_base64 = None
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Download the image
+            download_url = image_url.replace('http://api-server:5010', 'http://api-server:5010')
+            async with session.get(download_url) as img_response:
+                if img_response.status == 200:
+                    image_data = await img_response.read()
+                    # Convert to base64
+                    import base64
+                    image_base64 = base64.b64encode(image_data).decode('utf-8')
+                    logger.info(f"Image downloaded and converted to base64 ({len(image_base64)} chars)")
+                else:
+                    raise Exception(f"Failed to download image: {img_response.status}")
+    except Exception as e:
+        logger.error(f"Failed to download/convert image: {e}")
+        # Refund credits
+        db.add_credits(user.id, COST_VIDEO, "Refund for failed image download")
+        await status_msg.edit_text(
+            "❌ Failed to process image. Your credits have been refunded.\n"
+            "Please try again or contact admin."
+        )
+        return
+    
+    # Fixed video prompts
+    video_prompt = "high quality, 4k, slow motion, loopable, heavy breathing, chest heaving, looking at viewer, blinking, slight smile, wind blowing hair, subtle body movement, soft lighting, hyperrealistic, detailed skin texture"
+    
+    # Call API with image base64 for i2v
+    result_url = await call_api(VIDEO_MODEL, video_prompt, timeout=300, image_base64=image_base64)
     
     if result_url:
         # Delete status message
@@ -1780,6 +1835,80 @@ async def get_endpoints_command(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
 
+async def storage_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /storage command - Show storage usage (admin only)."""
+    user = update.effective_user
+    
+    # Check if user is admin
+    if user.id not in ADMIN_IDS:
+        return
+    
+    try:
+        # Call server API to get storage status
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            # Get server base URL from API_URL
+            import re
+            server_base = re.match(r'(https?://[^/]+)', API_URL)
+            if not server_base:
+                raise Exception("Cannot determine server base URL")
+            
+            status_url = f"{server_base.group(1)}/api/storage_status"
+            
+            async with session.get(
+                status_url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    used_gb = result.get('used_gb', 0)
+                    max_gb = result.get('max_gb', 20)
+                    usage_percent = result.get('usage_percent', 0)
+                    file_count = result.get('file_count', 0)
+                    
+                    # 根据使用率显示不同的emoji
+                    if usage_percent < 50:
+                        status_emoji = "🟢"
+                    elif usage_percent < 80:
+                        status_emoji = "🟡"
+                    else:
+                        status_emoji = "🔴"
+                    
+                    # 创建进度条
+                    bar_length = 10
+                    filled = int((usage_percent / 100) * bar_length)
+                    bar = "█" * filled + "░" * (bar_length - filled)
+                    
+                    await update.message.reply_text(
+                        f"💾 **Storage Status**\n\n"
+                        f"{status_emoji} **Usage:** {used_gb}GB / {max_gb}GB ({usage_percent}%)\n"
+                        f"`{bar}` {usage_percent}%\n\n"
+                        f"📁 **Files:** {file_count} files\n"
+                        f"📊 **Available:** {max_gb - used_gb:.2f}GB\n\n"
+                        f"💡 _Cleanup triggers at {max_gb}GB (oldest files removed first)_",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    error_text = await response.text()
+                    await update.message.reply_text(
+                        f"❌ Failed to get storage status: {error_text}"
+                    )
+    
+    except Exception as e:
+        logger.error(f"Error getting storage status: {e}")
+        import traceback
+        traceback.print_exc()
+        await update.message.reply_text(
+            f"❌ Error: {str(e)}",
+            parse_mode='Markdown'
+        )
+
+
 async def check_join_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle '✅ I Have Joined' button callback - 验证用户是否真的加入了频道."""
     query = update.callback_query
@@ -1894,6 +2023,7 @@ async def post_init(application: Application):
         BotCommand("broadcast", "📢 Broadcast Message"),
         BotCommand("set_endpoint", "🔧 Set ComfyUI Endpoint"),
         BotCommand("get_endpoints", "📡 Get Current Endpoints"),
+        BotCommand("storage", "💾 Storage Status"),
     ]
     
     # Set default commands for all users
@@ -1956,6 +2086,7 @@ def main():
     application.add_handler(CommandHandler("delete_user", delete_user_command))
     application.add_handler(CommandHandler("set_endpoint", set_comfyui_endpoint_command))
     application.add_handler(CommandHandler("get_endpoints", get_endpoints_command))
+    application.add_handler(CommandHandler("storage", storage_status_command))
     
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(check_join_status_callback, pattern="^check_join_status$"))

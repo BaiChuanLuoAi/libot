@@ -100,9 +100,11 @@ count_lock = threading.Lock()
 # 视频超时时间：10分钟
 VIDEO_TIMEOUT = 600
 
-# 文件清理配置：24小时后自动清理
-FILE_CLEANUP_HOURS = 24
-CLEANUP_INTERVAL = 3600  # 每小时检查一次
+# 文件清理配置：基于存储空间大小
+MAX_STORAGE_SIZE_GB = 10  # 最大存储空间10GB
+CLEANUP_SIZE_GB = 2  # 超过限制时删除2GB内容
+CLEANUP_CHECK_INTERVAL = 600  # 每10分钟检查一次是否到清理时间
+CLEANUP_HOUR = 3  # 上海时间3点执行清理（UTC+8）
 
 # 统计数据
 stats_lock = threading.Lock()
@@ -215,47 +217,129 @@ def load_video_workflows():
 T2V_WORKFLOW, I2V_WORKFLOW = load_video_workflows()
 
 # ===== 文件清理函数 =====
-def cleanup_old_files():
-    """清理24小时前的文件"""
+def get_directory_size(directory):
+    """计算目录总大小（字节）"""
+    total_size = 0
     try:
-        now = time.time()
-        cutoff_time = now - (FILE_CLEANUP_HOURS * 3600)
+        for filename in os.listdir(directory):
+            filepath = os.path.join(directory, filename)
+            if os.path.isfile(filepath):
+                total_size += os.path.getsize(filepath)
+    except Exception as e:
+        print(f"计算目录大小时出错: {e}")
+    return total_size
+
+def cleanup_old_files():
+    """基于存储空间的智能清理：超过10GB时删除最旧的2GB文件"""
+    try:
+        # 计算当前目录总大小
+        total_size = get_directory_size(IMAGES_DIR)
+        total_size_gb = total_size / (1024 ** 3)
+        
+        print(f"📊 当前存储使用: {total_size_gb:.2f}GB / {MAX_STORAGE_SIZE_GB}GB")
+        
+        # 如果未超过限制，不进行清理
+        if total_size_gb <= MAX_STORAGE_SIZE_GB:
+            print(f"✅ 存储空间充足，无需清理")
+            return
+        
+        print(f"⚠️  存储空间已达 {total_size_gb:.2f}GB，开始清理 {CLEANUP_SIZE_GB}GB 的旧文件...")
+        
+        # 获取所有文件及其修改时间
+        files_info = []
+        for filename in os.listdir(IMAGES_DIR):
+            filepath = os.path.join(IMAGES_DIR, filename)
+            if os.path.isfile(filepath):
+                file_mtime = os.path.getmtime(filepath)
+                file_size = os.path.getsize(filepath)
+                files_info.append({
+                    'path': filepath,
+                    'name': filename,
+                    'mtime': file_mtime,
+                    'size': file_size
+                })
+        
+        # 按修改时间排序（最旧的在前）
+        files_info.sort(key=lambda x: x['mtime'])
+        
+        # 计算需要删除的大小（2GB）
+        cleanup_bytes = CLEANUP_SIZE_GB * (1024 ** 3)
         
         cleaned_count = 0
         cleaned_size = 0
         
-        for filename in os.listdir(IMAGES_DIR):
-            filepath = os.path.join(IMAGES_DIR, filename)
+        # 从最旧的文件开始删除，直到删除了2GB
+        for file_info in files_info:
+            if cleaned_size >= cleanup_bytes:
+                break
             
-            if os.path.isfile(filepath):
-                file_mtime = os.path.getmtime(filepath)
-                
-                if file_mtime < cutoff_time:
-                    file_size = os.path.getsize(filepath)
-                    os.remove(filepath)
-                    cleaned_count += 1
-                    cleaned_size += file_size
-                    print(f"🗑️  清理文件: {filename} ({file_size / 1024 / 1024:.2f}MB)")
+            try:
+                os.remove(file_info['path'])
+                cleaned_count += 1
+                cleaned_size += file_info['size']
+                print(f"🗑️  清理文件: {file_info['name']} ({file_info['size'] / 1024 / 1024:.2f}MB)")
+            except Exception as e:
+                print(f"删除文件失败 {file_info['name']}: {e}")
         
-        if cleaned_count > 0:
-            print(f"✅ 清理完成: 删除 {cleaned_count} 个文件，释放 {cleaned_size / 1024 / 1024:.2f}MB 空间")
+        final_size = total_size - cleaned_size
+        final_size_gb = final_size / (1024 ** 3)
+        print(f"✅ 清理完成: 删除 {cleaned_count} 个文件，释放 {cleaned_size / 1024 / 1024:.2f}MB 空间")
+        print(f"📊 清理后存储: {final_size_gb:.2f}GB / {MAX_STORAGE_SIZE_GB}GB")
         
     except Exception as e:
         print(f"清理文件时出错: {e}")
+        import traceback
+        traceback.print_exc()
+
+# 记录上次清理日期
+last_cleanup_date = None
+
+def should_run_cleanup():
+    """检查是否应该运行清理（每天上海时间3点）"""
+    global last_cleanup_date
+    
+    from datetime import datetime, timezone, timedelta
+    
+    # 上海时区 UTC+8
+    shanghai_tz = timezone(timedelta(hours=8))
+    now_shanghai = datetime.now(shanghai_tz)
+    
+    current_date = now_shanghai.date()
+    current_hour = now_shanghai.hour
+    
+    # 如果今天已经清理过，则不再清理
+    if last_cleanup_date == current_date:
+        return False
+    
+    # 如果当前时间是3点（3:00-3:59），执行清理
+    if current_hour == CLEANUP_HOUR:
+        last_cleanup_date = current_date
+        return True
+    
+    return False
 
 def auto_cleanup_loop():
-    """后台定时清理线程"""
+    """后台定时清理线程 - 每天上海时间3点执行一次"""
+    print(f"🗑️  自动清理已启动：每天上海时间 {CLEANUP_HOUR}:00 检查存储空间")
+    
     while True:
         try:
-            time.sleep(CLEANUP_INTERVAL)
-            cleanup_old_files()
+            time.sleep(CLEANUP_CHECK_INTERVAL)
+            
+            if should_run_cleanup():
+                from datetime import datetime, timezone, timedelta
+                shanghai_tz = timezone(timedelta(hours=8))
+                now_shanghai = datetime.now(shanghai_tz)
+                print(f"\n⏰ 定时清理触发 - 上海时间: {now_shanghai.strftime('%Y-%m-%d %H:%M:%S')}")
+                cleanup_old_files()
         except Exception as e:
             print(f"自动清理循环错误: {e}")
+            import traceback
+            traceback.print_exc()
 
 # 启动清理线程
 cleanup_thread = threading.Thread(target=auto_cleanup_loop, daemon=True)
 cleanup_thread.start()
-print(f"🗑️  自动清理已启动：每 {CLEANUP_INTERVAL/3600} 小时清理 {FILE_CLEANUP_HOURS} 小时前的文件")
 
 # ===== 日志函数 =====
 def log_request(service_type, status, details=None):
@@ -687,6 +771,35 @@ def get_endpoints():
         "image_url": COMFYUI_API_URL,
         "video_url": COMFYUI_VIDEO_API_URL
     })
+
+@app.route('/api/storage_status', methods=['GET'])
+def get_storage_status():
+    """获取存储使用情况（管理员功能）"""
+    # 验证API Key
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or auth_header.replace("Bearer ", "") != SERVER_AUTH_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    try:
+        # 计算当前存储使用
+        total_size = get_directory_size(IMAGES_DIR)
+        total_size_gb = total_size / (1024 ** 3)
+        
+        # 统计文件数量
+        file_count = len([f for f in os.listdir(IMAGES_DIR) if os.path.isfile(os.path.join(IMAGES_DIR, f))])
+        
+        # 计算使用百分比
+        usage_percent = (total_size_gb / MAX_STORAGE_SIZE_GB) * 100
+        
+        return jsonify({
+            "used_gb": round(total_size_gb, 2),
+            "max_gb": MAX_STORAGE_SIZE_GB,
+            "usage_percent": round(usage_percent, 1),
+            "file_count": file_count,
+            "directory": IMAGES_DIR
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/')
 def index():
@@ -1125,13 +1238,21 @@ def handle_video_t2v(prompt_text, model, stream, data):
         workflow = json.loads(json.dumps(T2V_WORKFLOW))
         seed = random.randint(1, 999999999999999)
         
-        # 更新工作流参数
+        # 更新工作流参数 - 正面提示词
         if "89" in workflow:
             workflow["89"]["inputs"]["text"] = prompt_text
+        
+        # 更新负面提示词 - 与ComfyUI工作流一致（T2V包含额外的"裸露，NSFW"）
+        if "72" in workflow:
+            workflow["72"]["inputs"]["text"] = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，裸露，NSFW"
+        
+        # 更新视频尺寸为竖屏
         if "74" in workflow:
             workflow["74"]["inputs"]["width"] = 480
             workflow["74"]["inputs"]["height"] = 832
             workflow["74"]["inputs"]["length"] = 81
+        
+        # 更新随机种子
         if "81" in workflow:
             workflow["81"]["inputs"]["noise_seed"] = seed
         
@@ -1317,13 +1438,21 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
         workflow = json.loads(json.dumps(I2V_WORKFLOW))
         seed = random.randint(1, 999999999999999)
         
-        # 更新工作流参数
+        # 更新工作流参数 - 正面提示词
         if "93" in workflow:
             workflow["93"]["inputs"]["text"] = prompt_text
+        
+        # 更新负面提示词 - 与ComfyUI工作流一致
+        if "89" in workflow:
+            workflow["89"]["inputs"]["text"] = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
+        
+        # 更新视频尺寸为竖屏
         if "98" in workflow:
             workflow["98"]["inputs"]["width"] = 480
             workflow["98"]["inputs"]["height"] = 832
             workflow["98"]["inputs"]["length"] = 81
+        
+        # 更新随机种子
         if "86" in workflow:
             workflow["86"]["inputs"]["noise_seed"] = seed
         
