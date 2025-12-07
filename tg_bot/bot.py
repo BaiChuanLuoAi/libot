@@ -114,6 +114,155 @@ with open('prompts.json', 'r', encoding='utf-8') as f:
     PROMPTS = json.load(f)
 
 
+# ============================================
+# 🔒 频道关注验证装饰器（核心安全机制）
+# ============================================
+def require_channel_membership(func):
+    """
+    装饰器：强制要求用户关注频道才能使用命令
+    
+    应用于所有核心功能命令：
+    - /checkin (签到)
+    - /roll (生成图片)
+    - /buy (购买积分)
+    - /balance (查看余额)
+    - /settings (设置)
+    等...
+    
+    ⚠️ 不应用于 /start（需要自定义逻辑显示引导）
+    """
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+        
+        # 如果没有配置必需频道，直接放行
+        if not REQUIRED_CHANNEL:
+            return await func(update, context)
+        
+        try:
+            # 检查用户的频道成员状态
+            member = await context.bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user.id)
+            
+            # ✅ 用户已关注频道：状态为 member、administrator 或 creator
+            if member.status in ['member', 'administrator', 'creator']:
+                return await func(update, context)
+            
+            # ❌ 用户未关注频道
+            keyboard = [
+                [InlineKeyboardButton("👉 Join Official Channel", url=CHANNEL_LINK)],
+                [InlineKeyboardButton("✅ I Have Joined", callback_data="check_join_status")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                "🔒 **Channel Membership Required**\n\n"
+                "This feature requires joining our official channel first.\n\n"
+                "**How to unlock:**\n"
+                "1️⃣ Tap **'Join Official Channel'** below\n"
+                "2️⃣ Join the channel\n"
+                "3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
+                "_This helps us prevent spam and support our community!_ 💝",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return  # 🚨 阻止未验证用户执行命令
+            
+        except Exception as e:
+            # ⚠️ 验证失败（可能是权限问题、网络问题等）
+            logger.error(f"🔴 Channel verification failed for user {user.id}: {e}")
+            
+            # 🔒 安全策略：验证失败时阻止访问
+            keyboard = [
+                [InlineKeyboardButton("👉 Join Official Channel", url=CHANNEL_LINK)],
+                [InlineKeyboardButton("✅ Try Again", callback_data="check_join_status")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                "⚠️ **Verification Required**\n\n"
+                "We couldn't verify your channel membership due to a technical issue.\n\n"
+                "**Please:**\n"
+                "1️⃣ Join our official channel\n"
+                "2️⃣ Wait a few seconds\n"
+                "3️⃣ Tap **'✅ Try Again'**\n\n"
+                f"_Error: {str(e)[:80]}_\n"
+                "_If this persists, please contact support._",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return  # 🚨 阻止未验证用户执行命令
+    
+    return wrapper
+
+
+def require_channel_membership_callback(func):
+    """
+    装饰器：强制要求用户关注频道才能使用回调按钮功能
+    
+    专门用于 CallbackQueryHandler 的装饰器版本
+    """
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        user = update.effective_user
+        
+        # 如果没有配置必需频道，直接放行
+        if not REQUIRED_CHANNEL:
+            return await func(update, context)
+        
+        try:
+            # 检查用户的频道成员状态
+            member = await context.bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user.id)
+            
+            # ✅ 用户已关注频道
+            if member.status in ['member', 'administrator', 'creator']:
+                return await func(update, context)
+            
+            # ❌ 用户未关注频道
+            await query.answer("❌ Please join our channel first!", show_alert=True)
+            
+            keyboard = [
+                [InlineKeyboardButton("👉 Join Official Channel", url=CHANNEL_LINK)],
+                [InlineKeyboardButton("✅ I Have Joined", callback_data="check_join_status")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.message.reply_text(
+                "🔒 **Channel Membership Required**\n\n"
+                "This feature requires joining our official channel first.\n\n"
+                "**How to unlock:**\n"
+                "1️⃣ Tap **'Join Official Channel'** below\n"
+                "2️⃣ Join the channel\n"
+                "3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
+                "_This helps us prevent spam and support our community!_ 💝",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return  # 🚨 阻止未验证用户执行回调
+            
+        except Exception as e:
+            # ⚠️ 验证失败
+            logger.error(f"🔴 Channel verification failed for user {user.id} (callback): {e}")
+            
+            await query.answer("⚠️ Verification failed. Please try again.", show_alert=True)
+            
+            keyboard = [
+                [InlineKeyboardButton("👉 Join Official Channel", url=CHANNEL_LINK)],
+                [InlineKeyboardButton("✅ Try Again", callback_data="check_join_status")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.message.reply_text(
+                "⚠️ **Verification Required**\n\n"
+                "We couldn't verify your channel membership.\n\n"
+                f"_Error: {str(e)[:80]}_\n"
+                "_Please join the channel and try again._",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return  # 🚨 阻止未验证用户执行回调
+    
+    return wrapper
+
+
 async def call_api(model: str, prompt: str, width: int = 832, height: int = 1216, timeout: int = 300, image_base64: Optional[str] = None) -> Optional[str]:
     """
     Call the API Gateway to generate image or video.
@@ -281,11 +430,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
         except Exception as e:
             # 如果机器人不是频道管理员，会报错 'Chat not found'
-            logger.warning(f"⚠️ Channel Check Error: {e}")
-            logger.warning(f"⚠️ Please make sure the bot is an administrator in {REQUIRED_CHANNEL}")
-            # 为了不影响已有用户，这里暂时放行
-            # 生产环境建议：如果检查失败，通知管理员而不是放行
-            pass
+            logger.error(f"⚠️ Channel Check Error: {e}")
+            logger.error(f"⚠️ Please make sure the bot is an administrator in {REQUIRED_CHANNEL}")
+            
+            # 🔒 安全策略：验证失败时阻止访问，而不是放行
+            keyboard = [
+                [InlineKeyboardButton("👉 Join Official Channel", url=CHANNEL_LINK)],
+                [InlineKeyboardButton("✅ Try Again", callback_data="check_join_status")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                "⚠️ **Verification Required**\n\n"
+                "We need to verify your channel membership, but encountered a technical issue.\n\n"
+                "**Please try:**\n"
+                "1️⃣ Join our official channel below\n"
+                "2️⃣ Wait a few seconds\n"
+                "3️⃣ Tap **'✅ Try Again'**\n\n"
+                f"_If this persists, please contact support. Error: {str(e)[:50]}_",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return  # 🚨 阻止未验证用户继续使用
     
     # Check for referral code in /start command
     referrer_id = None
@@ -407,6 +573,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
 
+@require_channel_membership
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /balance command."""
     user = update.effective_user
@@ -435,6 +602,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='Markdown')
 
 
+@require_channel_membership
 async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /roll command - Generate random image."""
     user = update.effective_user
@@ -547,6 +715,7 @@ async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@require_channel_membership_callback
 async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle video generation callback from inline button."""
     query = update.callback_query
@@ -693,6 +862,7 @@ async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@require_channel_membership
 async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /invite command - Generate referral link."""
     user = update.effective_user
@@ -739,6 +909,7 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='Markdown')
 
 
+@require_channel_membership
 async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /checkin command - Daily check-in."""
     user = update.effective_user
@@ -802,6 +973,7 @@ async def checkin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@require_channel_membership
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /buy command - Show payment options."""
     user = update.effective_user
@@ -859,6 +1031,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(message, parse_mode='Markdown')
 
 
+@require_channel_membership_callback
 async def package_selection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle package selection - show payment method options."""
     query = update.callback_query
@@ -898,6 +1071,7 @@ async def package_selection_callback(update: Update, context: ContextTypes.DEFAU
     await query.message.reply_text(message, reply_markup=reply_markup, parse_mode='Markdown')
 
 
+@require_channel_membership_callback
 async def plisio_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle Plisio crypto payment generation."""
     query = update.callback_query
