@@ -43,6 +43,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Disable httpx INFO logs to reduce noise
+logging.getLogger('httpx').setLevel(logging.WARNING)
+
 # Configuration - Load from environment variables
 API_URL = os.getenv('API_URL', "http://127.0.0.1:5010/v1/chat/completions")
 API_KEY = os.getenv('API_KEY')  # 必须从环境变量读取，不设置默认值
