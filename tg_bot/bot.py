@@ -155,12 +155,13 @@ def require_channel_membership(func):
             
             await update.message.reply_text(
                 "🔒 **Channel Membership Required**\n\n"
-                "This feature requires joining our official channel first.\n\n"
-                "**How to unlock:**\n"
-                "1️⃣ Tap **'Join Official Channel'** below\n"
-                "2️⃣ Join the channel\n"
-                "3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
-                "_This helps us prevent spam and support our community!_ 💝",
+                f"This feature requires joining our official channel first.\n\n"
+                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
+                f"**How to unlock:**\n"
+                f"1️⃣ Tap the link above or button below to join\n"
+                f"2️⃣ Click **JOIN** in the channel\n"
+                f"3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
+                f"_This helps us prevent spam and support our community!_ 💝",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
@@ -179,13 +180,14 @@ def require_channel_membership(func):
             
             await update.message.reply_text(
                 "⚠️ **Verification Required**\n\n"
-                "We couldn't verify your channel membership due to a technical issue.\n\n"
-                "**Please:**\n"
-                "1️⃣ Join our official channel\n"
-                "2️⃣ Wait a few seconds\n"
-                "3️⃣ Tap **'✅ Try Again'**\n\n"
+                f"We couldn't verify your channel membership due to a technical issue.\n\n"
+                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
+                f"**Please:**\n"
+                f"1️⃣ Click the link above to join our channel\n"
+                f"2️⃣ Wait a few seconds\n"
+                f"3️⃣ Tap **'✅ Try Again'**\n\n"
                 f"_Error: {str(e)[:80]}_\n"
-                "_If this persists, please contact support._",
+                f"_If this persists, please contact support._",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
@@ -227,12 +229,13 @@ def require_channel_membership_callback(func):
             
             await query.message.reply_text(
                 "🔒 **Channel Membership Required**\n\n"
-                "This feature requires joining our official channel first.\n\n"
-                "**How to unlock:**\n"
-                "1️⃣ Tap **'Join Official Channel'** below\n"
-                "2️⃣ Join the channel\n"
-                "3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
-                "_This helps us prevent spam and support our community!_ 💝",
+                f"This feature requires joining our official channel first.\n\n"
+                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
+                f"**How to unlock:**\n"
+                f"1️⃣ Tap the link above or button below to join\n"
+                f"2️⃣ Click **JOIN** in the channel\n"
+                f"3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
+                f"_This helps us prevent spam and support our community!_ 💝",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
@@ -252,9 +255,10 @@ def require_channel_membership_callback(func):
             
             await query.message.reply_text(
                 "⚠️ **Verification Required**\n\n"
-                "We couldn't verify your channel membership.\n\n"
+                f"We couldn't verify your channel membership.\n\n"
+                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
                 f"_Error: {str(e)[:80]}_\n"
-                "_Please join the channel and try again._",
+                f"_Please click the link above to join and try again._",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
@@ -417,12 +421,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await update.message.reply_text(
                     "🛑 **ACCESS REQUIRED**\n\n"
-                    "To prevent bots and activate your **15 FREE Credits**, please join our official channel first.\n\n"
-                    "**How to unlock:**\n"
-                    "1️⃣ Tap **'Join Official Channel'** below\n"
-                    "2️⃣ Join the channel\n"
-                    "3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
-                    "_We use this to prevent spam bots._",
+                    f"To activate your **15 FREE Credits**, please join our official channel first!\n\n"
+                    f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
+                    f"**How to unlock:**\n"
+                    f"1️⃣ Click the link above or button below\n"
+                    f"2️⃣ Tap **JOIN** in the channel\n"
+                    f"3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
+                    f"_We use this to prevent spam bots and support our community._ 🎁",
                     reply_markup=reply_markup,
                     parse_mode='Markdown'
                 )
@@ -442,11 +447,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await update.message.reply_text(
                 "⚠️ **Verification Required**\n\n"
-                "We need to verify your channel membership, but encountered a technical issue.\n\n"
-                "**Please try:**\n"
-                "1️⃣ Join our official channel below\n"
-                "2️⃣ Wait a few seconds\n"
-                "3️⃣ Tap **'✅ Try Again'**\n\n"
+                f"We need to verify your channel membership, but encountered a technical issue.\n\n"
+                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
+                f"**Please try:**\n"
+                f"1️⃣ Click the link above to join our channel\n"
+                f"2️⃣ Wait a few seconds\n"
+                f"3️⃣ Tap **'✅ Try Again'**\n\n"
                 f"_If this persists, please contact support. Error: {str(e)[:50]}_",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
@@ -1402,7 +1408,11 @@ async def view_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
+        from datetime import datetime, date
+        
         target_user_id = int(context.args[0])
+        today = date.today().isoformat()
+        current_month = datetime.now().strftime('%Y-%m')
         
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -1416,7 +1426,7 @@ async def view_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_info = cursor.fetchone()
             
             if not user_info:
-                await update.message.reply_text(f"❌ User `{target_user_id}` not found.")
+                await update.message.reply_text(f"❌ User `{target_user_id}` not found.", parse_mode='Markdown')
                 return
             
             # Get transaction history count
@@ -1440,15 +1450,54 @@ async def view_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """, (target_user_id,))
             referral_count = cursor.fetchone()['count']
             
-            # Get payment history
+            # 🆕 Get referral details - who paid and how much
             cursor.execute("""
-                SELECT COUNT(*) as count, SUM(money_amount) as total
+                SELECT 
+                    u.user_id,
+                    u.username,
+                    u.first_name,
+                    COALESCE(SUM(CASE WHEN t.status = 'completed' AND t.money_amount IS NOT NULL 
+                                 THEN t.money_amount ELSE 0 END), 0) as total_paid
+                FROM users u
+                LEFT JOIN transactions t ON u.user_id = t.user_id
+                WHERE u.invited_by = ?
+                GROUP BY u.user_id, u.username, u.first_name
+                HAVING total_paid > 0
+                ORDER BY total_paid DESC
+            """, (target_user_id,))
+            paid_referrals = cursor.fetchall()
+            
+            # 🆕 Calculate total revenue from referrals
+            total_referral_revenue = sum(ref['total_paid'] for ref in paid_referrals)
+            paid_referral_count = len(paid_referrals)
+            
+            # Get payment history - All time
+            cursor.execute("""
+                SELECT COUNT(*) as count, COALESCE(SUM(money_amount), 0) as total
                 FROM payments
                 WHERE user_id = ? AND status = 'completed'
             """, (target_user_id,))
             payment_info = cursor.fetchone()
             payment_count = payment_info['count'] or 0
             total_paid = payment_info['total'] or 0
+            
+            # 🆕 Get today's payments
+            cursor.execute("""
+                SELECT COALESCE(SUM(money_amount), 0) as total
+                FROM payments
+                WHERE user_id = ? AND status = 'completed' 
+                AND DATE(created_at) = ?
+            """, (target_user_id, today))
+            today_paid = cursor.fetchone()['total'] or 0
+            
+            # 🆕 Get this month's payments
+            cursor.execute("""
+                SELECT COALESCE(SUM(money_amount), 0) as total
+                FROM payments
+                WHERE user_id = ? AND status = 'completed' 
+                AND strftime('%Y-%m', created_at) = ?
+            """, (target_user_id, current_month))
+            month_paid = cursor.fetchone()['total'] or 0
         
         # Format last checkin
         last_checkin = user_info['last_checkin'] or "Never"
@@ -1478,10 +1527,28 @@ async def view_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🕒 **Last Check-in:** {last_checkin}\n\n"
             
             f"👥 **Referrals:** {referral_count} users invited\n"
+            f"💰 **Paid Referrals:** {paid_referral_count}/{referral_count} users\n"
+            f"💵 **Referral Revenue:** ${total_referral_revenue:.2f}\n"
             f"📥 **Invited By:** {inviter_text}\n\n"
-            
-            f"💳 **Payments:** {payment_count} orders\n"
-            f"💰 **Total Paid:** ${total_paid:.2f}\n\n"
+        )
+        
+        # 🆕 Show paid referrals details (top 5)
+        if paid_referrals:
+            message += f"**💎 Top Paying Referrals:**\n"
+            for i, ref in enumerate(paid_referrals[:5], 1):
+                ref_name = ref['username'] or ref['first_name'] or f"User_{ref['user_id']}"
+                message += f"{i}. {ref_name}: ${ref['total_paid']:.2f}\n"
+            if len(paid_referrals) > 5:
+                message += f"_...and {len(paid_referrals) - 5} more_\n"
+            message += "\n"
+        
+        # Payment statistics
+        message += (
+            f"💳 **Payment History:**\n"
+            f"📦 **Orders:** {payment_count} completed\n"
+            f"💰 **Total (All Time):** ${total_paid:.2f}\n"
+            f"📅 **This Month:** ${month_paid:.2f}\n"
+            f"🕐 **Today:** ${today_paid:.2f}\n\n"
             
             f"🛠️ **Quick Actions:**\n"
             f"• `/add_credits {target_user_id} [amount]`\n"
@@ -1494,6 +1561,8 @@ async def view_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Invalid user_id. Must be a number.")
     except Exception as e:
         logger.error(f"Error viewing user: {e}")
+        import traceback
+        traceback.print_exc()
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
