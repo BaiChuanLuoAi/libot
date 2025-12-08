@@ -664,11 +664,12 @@ def download_comfyui_video(outputs):
         import json
         print(json.dumps(outputs, indent=2, ensure_ascii=False))
         
-        # 查找视频输出节点（SaveVideo或VHS_VideoCombine）
+        # 查找视频输出节点（SaveVideo可能使用 images、videos 或 gifs 字段）
         for node_id, node_output in outputs.items():
             print(f"  → 节点 {node_id}: {list(node_output.keys())}")
             
-            # 尝试多种可能的输出格式
+            # 按优先级尝试多种可能的输出格式
+            # 1. 尝试 videos 字段
             if "videos" in node_output:
                 videos = node_output["videos"]
                 print(f"  → 找到videos字段，内容: {videos}")
@@ -679,13 +680,30 @@ def download_comfyui_video(outputs):
                     
                     if filename:
                         print(f"  → 提取视频文件: {filename}, 子目录: {subfolder}")
-                        # 使用与图片一致的下载方式
                         video_data = get_comfyui_video(filename, subfolder)
                         if video_data:
                             return video_data
             
-            # 尝试查找 gifs 字段（某些节点可能输出gif）
-            elif "gifs" in node_output:
+            # 2. 尝试 images 字段（SaveVideo 节点可能使用这个）
+            if "images" in node_output:
+                images = node_output["images"]
+                print(f"  → 找到images字段，内容: {images}")
+                if images and len(images) > 0:
+                    # 检查是否是视频文件（通过文件扩展名或 animated 标志）
+                    image_info = images[0]
+                    filename = image_info.get("filename", "")
+                    subfolder = image_info.get("subfolder", "")
+                    is_animated = node_output.get("animated", [False])[0] if "animated" in node_output else False
+                    
+                    # 如果文件名是视频格式或标记为动画
+                    if filename and (filename.endswith(('.mp4', '.webm', '.avi', '.mov', '.gif')) or is_animated):
+                        print(f"  → 提取视频文件: {filename}, 子目录: {subfolder}, 动画: {is_animated}")
+                        video_data = get_comfyui_video(filename, subfolder)
+                        if video_data:
+                            return video_data
+            
+            # 3. 尝试 gifs 字段（某些节点可能输出gif）
+            if "gifs" in node_output:
                 gifs = node_output["gifs"]
                 print(f"  → 找到gifs字段，内容: {gifs}")
                 if gifs and len(gifs) > 0:
@@ -699,7 +717,7 @@ def download_comfyui_video(outputs):
                         if video_data:
                             return video_data
         
-        print("❌ 未找到视频输出（检查了videos和gifs字段）")
+        print("❌ 未找到视频输出（检查了videos、images、gifs字段）")
         return None
     
     except Exception as e:
