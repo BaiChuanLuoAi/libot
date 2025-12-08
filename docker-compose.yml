@@ -16,6 +16,7 @@ services:
       - ./logs:/app/logs
     environment:
       - COMFYUI_API_URL=${COMFYUI_API_URL:-http://dx.qyxc.vip:18188}
+      - SERVER_AUTH_KEY=${API_KEY}
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
     networks:
@@ -50,6 +51,7 @@ services:
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-8285418858:AAFtt_1rpMooqg09PNwVylkujCzaDtWHjJY}
       - API_URL=http://api-server:5010/v1/chat/completions
+      - API_KEY=${API_KEY}
       - ADMIN_IDS=1667404229
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
