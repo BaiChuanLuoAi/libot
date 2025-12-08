@@ -1160,7 +1160,8 @@ async def plisio_payment_callback(update: Update, context: ContextTypes.DEFAULT_
             ) as response:
                 if response.status == 200:
                     result = await response.json()
-                    logger.info(f"Plisio API response: {result}")
+                    # 简洁日志：只记录成功
+                    # logger.info(f"Plisio API response: {result}")
                     
                     # Plisio 成功响应格式：{"status": "success", "data": {...}}
                     if result.get("status") == "success" or result.get("data"):
@@ -1197,7 +1198,8 @@ async def plisio_payment_callback(update: Update, context: ContextTypes.DEFAULT_
                                 reply_markup=reply_markup,
                                 parse_mode='Markdown'
                             )
-                            logger.info(f"✅ Plisio invoice created for user {user.id}: {order_id}, txn_id: {txn_id}")
+                            # 简洁日志：只记录订单ID
+                            logger.info(f"💳 Payment: {order_id}")
                         else:
                             await query.message.reply_text("❌ Failed to create payment invoice. Please try again.")
                             logger.error(f"Plisio: No invoice URL in response: {result}")
@@ -2391,10 +2393,10 @@ def main():
         print("  Or edit config.env file in tg_bot directory\n")
         return
     
-    # Log configuration
-    logger.info(f"Bot Token: {token[:20]}...")
-    logger.info(f"API URL: {API_URL}")
-    logger.info(f"Admin IDs: {ADMIN_IDS}")
+    # 🔇 生产环境：简洁日志配置
+    # logger.info(f"Bot Token: {token[:20]}...")
+    # logger.info(f"API URL: {API_URL}")
+    # logger.info(f"Admin IDs: {ADMIN_IDS}")
     
     # Create application with post_init callback
     application = Application.builder().token(token).post_init(post_init).build()
@@ -2432,8 +2434,8 @@ def main():
     application.add_error_handler(error_handler)
     
     # Start bot
-    logger.info("Bot started! Press Ctrl+C to stop.")
-    print("\n✅ Bot is running! Press Ctrl+C to stop.\n")
+    # logger.info("Bot started! Press Ctrl+C to stop.")
+    print("\n✅ Lili AI Bot - Production Mode\n")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

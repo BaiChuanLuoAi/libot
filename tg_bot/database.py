@@ -157,7 +157,8 @@ class Database:
                     VALUES (?, 15, 'INITIAL', 'Welcome bonus - Check in daily for more!')
                 """, (user_id,))
                 
-                logger.info(f"New user created: {user_id} ({username})")
+                # 简洁日志：减少新用户注册日志
+                # logger.info(f"New user created: {user_id} ({username})")
                 
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
                 return dict(cursor.fetchone())
@@ -189,7 +190,8 @@ class Database:
                     VALUES (?, ?, ?, ?, 'ADD', ?, ?, ?, 'completed')
                 """, (user_id, amount, money_amount, currency, description, provider, external_ref))
                 
-                logger.info(f"Added {amount} credits to user {user_id}")
+                # 简洁日志：只记录重要的积分操作
+                # logger.info(f"Added {amount} credits to user {user_id}")
                 return True
         except Exception as e:
             logger.error(f"Failed to add credits: {e}")
@@ -219,7 +221,8 @@ class Database:
                     VALUES (?, ?, 'DEDUCT', ?)
                 """, (user_id, -amount, description))
                 
-                logger.info(f"Deducted {amount} credits from user {user_id}")
+                # 简洁日志：减少扣费日志
+                # logger.info(f"Deducted {amount} credits from user {user_id}")
                 return True
         except Exception as e:
             logger.error(f"Failed to deduct credits: {e}")
@@ -378,7 +381,8 @@ class Database:
                 VALUES (?, ?, 'CHECKIN', ?)
             """, (user_id, reward, f"Daily check-in (Day {new_streak})"))
             
-            logger.info(f"User {user_id} checked in: +{reward} credits, streak: {new_streak}")
+            # 简洁日志：保留签到日志但减少详细程度
+            logger.info(f"✅ Checkin: User {user_id}, Streak: {new_streak}")
             
             return {
                 'success': True,

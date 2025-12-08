@@ -1299,7 +1299,8 @@ def handle_video_t2v(prompt_text, model, stream, data):
         workflow = json.loads(json.dumps(T2V_WORKFLOW))
         seed = random.randint(1, 999999999999999)
         
-        print(f"🎲 文生视频随机种子: {seed}")
+        # 🔇 简洁日志模式
+        # print(f"🎲 文生视频随机种子: {seed}")
         
         # 更新工作流参数 - 正面提示词
         if "89" in workflow:
@@ -1318,10 +1319,10 @@ def handle_video_t2v(prompt_text, model, stream, data):
         # 更新随机种子 - 需要同时更新两个KSampler节点
         if "81" in workflow:
             workflow["81"]["inputs"]["noise_seed"] = seed
-            print(f"  → 节点81种子已更新: {seed}")
+            # print(f"  → 节点81种子已更新: {seed}")
         if "78" in workflow:
             workflow["78"]["inputs"]["noise_seed"] = seed
-            print(f"  → 节点78种子已更新: {seed}")
+            # print(f"  → 节点78种子已更新: {seed}")
         
         print(f"📤 提交到ComfyUI视频端点")
         
@@ -1505,11 +1506,12 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
         workflow = json.loads(json.dumps(I2V_WORKFLOW))
         seed = random.randint(1, 999999999999999)
         
-        print(f"🎲 图生视频随机种子: {seed}")
+        # 🔇 简洁日志模式
+        # print(f"🎲 图生视频随机种子: {seed}")
         
         # 📝 图生视频使用工作流中固定的提示词，不再动态修改
         # 正面提示词（节点93）和负面提示词（节点89）保持工作流JSON中的原始值
-        print(f"  → 使用工作流固定提示词（不修改节点93和89）")
+        # print(f"  → 使用工作流固定提示词（不修改节点93和89）")
         
         # 更新视频尺寸为竖屏
         if "98" in workflow:
@@ -1520,10 +1522,10 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
         # 🔥 关键修复：更新随机种子 - 需要同时更新两个KSampler节点
         if "86" in workflow:
             workflow["86"]["inputs"]["noise_seed"] = seed
-            print(f"  → 节点86种子已更新: {seed}")
+            # print(f"  → 节点86种子已更新: {seed}")
         if "85" in workflow:
             workflow["85"]["inputs"]["noise_seed"] = seed
-            print(f"  → 节点85种子已更新: {seed}")
+            # print(f"  → 节点85种子已更新: {seed}")
         
         # 保存输入图片到本地并上传到ComfyUI
         image_filename = f"i2v_input_{uuid.uuid4().hex}.png"
@@ -1708,19 +1710,17 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
         i2v_semaphore.release()
 
 if __name__ == '__main__':
+    import logging
+    
+    # 🔇 生产环境：设置简洁日志
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.WARNING)  # 只显示警告和错误
+    
     print("="*60)
-    print("🚀 统一AI生成服务启动中...")
+    print("🚀 Lili AI Service - Production Mode")
     print("="*60)
-    print("📡 支持服务:")
-    print("  - 图像生成 (ComfyUI直连)")
-    print("  - 文生视频竖屏 (5并发, 10分钟超时)")
-    print("  - 图生视频竖屏 (5并发, 10分钟超时)")
-    print("="*60)
-    print(f"🔑 API Key: {SERVER_AUTH_KEY}")
-    print(f"📁 文件目录: {IMAGES_DIR}")
-    print(f"🌐 端口: 5010")
-    print(f"🎨 图像ComfyUI: {COMFYUI_API_URL}")
-    print(f"🎬 视频ComfyUI: {COMFYUI_VIDEO_API_URL}")
+    print(f"🌐 Port: 5010")
+    print(f"📁 Files: {IMAGES_DIR}")
     print("="*60)
     
     app.run(host='0.0.0.0', port=5010, threaded=True)
