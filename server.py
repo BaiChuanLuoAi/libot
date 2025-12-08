@@ -1299,6 +1299,8 @@ def handle_video_t2v(prompt_text, model, stream, data):
         workflow = json.loads(json.dumps(T2V_WORKFLOW))
         seed = random.randint(1, 999999999999999)
         
+        print(f"🎲 文生视频随机种子: {seed}")
+        
         # 更新工作流参数 - 正面提示词
         if "89" in workflow:
             workflow["89"]["inputs"]["text"] = prompt_text
@@ -1313,9 +1315,13 @@ def handle_video_t2v(prompt_text, model, stream, data):
             workflow["74"]["inputs"]["height"] = 832
             workflow["74"]["inputs"]["length"] = 81
         
-        # 更新随机种子
+        # 更新随机种子 - 需要同时更新两个KSampler节点
         if "81" in workflow:
             workflow["81"]["inputs"]["noise_seed"] = seed
+            print(f"  → 节点81种子已更新: {seed}")
+        if "78" in workflow:
+            workflow["78"]["inputs"]["noise_seed"] = seed
+            print(f"  → 节点78种子已更新: {seed}")
         
         print(f"📤 提交到ComfyUI视频端点")
         
@@ -1499,13 +1505,11 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
         workflow = json.loads(json.dumps(I2V_WORKFLOW))
         seed = random.randint(1, 999999999999999)
         
-        # 更新工作流参数 - 正面提示词
-        if "93" in workflow:
-            workflow["93"]["inputs"]["text"] = prompt_text
+        print(f"🎲 图生视频随机种子: {seed}")
         
-        # 更新负面提示词 - 与ComfyUI工作流一致
-        if "89" in workflow:
-            workflow["89"]["inputs"]["text"] = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
+        # 📝 图生视频使用工作流中固定的提示词，不再动态修改
+        # 正面提示词（节点93）和负面提示词（节点89）保持工作流JSON中的原始值
+        print(f"  → 使用工作流固定提示词（不修改节点93和89）")
         
         # 更新视频尺寸为竖屏
         if "98" in workflow:
@@ -1513,9 +1517,13 @@ def handle_video_i2v(prompt_text, input_image_base64, model, stream, data):
             workflow["98"]["inputs"]["height"] = 832
             workflow["98"]["inputs"]["length"] = 81
         
-        # 更新随机种子
+        # 🔥 关键修复：更新随机种子 - 需要同时更新两个KSampler节点
         if "86" in workflow:
             workflow["86"]["inputs"]["noise_seed"] = seed
+            print(f"  → 节点86种子已更新: {seed}")
+        if "85" in workflow:
+            workflow["85"]["inputs"]["noise_seed"] = seed
+            print(f"  → 节点85种子已更新: {seed}")
         
         # 保存输入图片到本地并上传到ComfyUI
         image_filename = f"i2v_input_{uuid.uuid4().hex}.png"
