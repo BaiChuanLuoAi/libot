@@ -12,8 +12,15 @@ logger = logging.getLogger(__name__)
 class Database:
     """Simple SQLite database for user credits management."""
     
-    def __init__(self, db_path: str = "bot_users.db"):
+    def __init__(self, db_path: str = "data/bot_users.db"):
         """Initialize database connection."""
+        # 确保数据目录存在
+        import os
+        db_dir = os.path.dirname(db_path)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            logger.info(f"Created database directory: {db_dir}")
+        
         self.db_path = db_path
         self._init_db()
     

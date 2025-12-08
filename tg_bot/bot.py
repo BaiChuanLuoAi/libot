@@ -114,6 +114,27 @@ with open('prompts.json', 'r', encoding='utf-8') as f:
     PROMPTS = json.load(f)
 
 
+def safe_markdown_name(name: str, max_length: int = 30) -> str:
+    """
+    安全地处理用户名用于 Markdown 显示
+    移除或替换可能导致 Markdown 解析错误的特殊字符
+    """
+    if not name:
+        return "Unknown"
+    
+    # 移除/替换 Markdown 特殊字符
+    special_chars = ['*', '_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    safe_name = name
+    for char in special_chars:
+        safe_name = safe_name.replace(char, '')
+    
+    # 限制长度
+    if len(safe_name) > max_length:
+        safe_name = safe_name[:max_length] + "..."
+    
+    return safe_name.strip() or "User"
+
+
 # ============================================
 # 🔒 频道关注验证装饰器（核心安全机制）
 # ============================================
@@ -154,16 +175,16 @@ def require_channel_membership(func):
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(
-                "🔒 **Channel Membership Required**\n\n"
+                "🔒 <b>Channel Membership Required</b>\n\n"
                 f"This feature requires joining our official channel first.\n\n"
-                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
-                f"**How to unlock:**\n"
+                f"📢 <b>Official Channel:</b> {CHANNEL_LINK}\n\n"
+                f"<b>How to unlock:</b>\n"
                 f"1️⃣ Tap the link above or button below to join\n"
-                f"2️⃣ Click **JOIN** in the channel\n"
-                f"3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
-                f"_This helps us prevent spam and support our community!_ 💝",
+                f"2️⃣ Click <b>JOIN</b> in the channel\n"
+                f"3️⃣ Come back and tap <b>'✅ I Have Joined'</b>\n\n"
+                f"<i>This helps us prevent spam and support our community!</i> 💝",
                 reply_markup=reply_markup,
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
             return  # 🚨 阻止未验证用户执行命令
             
@@ -179,17 +200,16 @@ def require_channel_membership(func):
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(
-                "⚠️ **Verification Required**\n\n"
+                "⚠️ <b>Verification Required</b>\n\n"
                 f"We couldn't verify your channel membership due to a technical issue.\n\n"
-                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
-                f"**Please:**\n"
+                f"📢 <b>Official Channel:</b> {CHANNEL_LINK}\n\n"
+                f"<b>Please:</b>\n"
                 f"1️⃣ Click the link above to join our channel\n"
                 f"2️⃣ Wait a few seconds\n"
-                f"3️⃣ Tap **'✅ Try Again'**\n\n"
-                f"_Error: {str(e)[:80]}_\n"
-                f"_If this persists, please contact support._",
+                f"3️⃣ Tap <b>'✅ Try Again'</b>\n\n"
+                f"<i>If this persists, please contact support.</i>",
                 reply_markup=reply_markup,
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
             return  # 🚨 阻止未验证用户执行命令
     
@@ -228,16 +248,16 @@ def require_channel_membership_callback(func):
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await query.message.reply_text(
-                "🔒 **Channel Membership Required**\n\n"
+                "🔒 <b>Channel Membership Required</b>\n\n"
                 f"This feature requires joining our official channel first.\n\n"
-                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
-                f"**How to unlock:**\n"
+                f"📢 <b>Official Channel:</b> {CHANNEL_LINK}\n\n"
+                f"<b>How to unlock:</b>\n"
                 f"1️⃣ Tap the link above or button below to join\n"
-                f"2️⃣ Click **JOIN** in the channel\n"
-                f"3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
-                f"_This helps us prevent spam and support our community!_ 💝",
+                f"2️⃣ Click <b>JOIN</b> in the channel\n"
+                f"3️⃣ Come back and tap <b>'✅ I Have Joined'</b>\n\n"
+                f"<i>This helps us prevent spam and support our community!</i> 💝",
                 reply_markup=reply_markup,
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
             return  # 🚨 阻止未验证用户执行回调
             
@@ -254,13 +274,12 @@ def require_channel_membership_callback(func):
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await query.message.reply_text(
-                "⚠️ **Verification Required**\n\n"
+                "⚠️ <b>Verification Required</b>\n\n"
                 f"We couldn't verify your channel membership.\n\n"
-                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
-                f"_Error: {str(e)[:80]}_\n"
-                f"_Please click the link above to join and try again._",
+                f"📢 <b>Official Channel:</b> {CHANNEL_LINK}\n\n"
+                f"<i>Please click the link above to join and try again.</i>",
                 reply_markup=reply_markup,
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
             return  # 🚨 阻止未验证用户执行回调
     
@@ -405,6 +424,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command with optional referral."""
     user = update.effective_user
     
+    # 🎁 STEP 0: 提前解析推荐码（在频道检查之前）
+    referrer_id = None
+    if context.args and len(context.args) > 0:
+        try:
+            ref_code = context.args[0]
+            if ref_code.startswith('ref_'):
+                referrer_id = int(ref_code[4:])
+                logger.info(f"User {user.id} started with referral code from {referrer_id}")
+        except:
+            pass
+    
     # 🔒 STEP 1: 强制检查频道关注状态 - 核心安全机制
     if REQUIRED_CHANNEL:
         try:
@@ -413,23 +443,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # ❌ 未关注频道：状态为 'left' (未加入) 或 'kicked' (被踢出)
             if member.status in ['left', 'kicked']:
                 # 🚫 拒绝访问，要求先加入频道
+                # 🎁 将推荐码嵌入到回调数据中，避免丢失
+                callback_data = f"check_join_status:{referrer_id}" if referrer_id else "check_join_status"
+                
                 keyboard = [
                     [InlineKeyboardButton("👉 Join Official Channel", url=CHANNEL_LINK)],
-                    [InlineKeyboardButton("✅ I Have Joined", callback_data="check_join_status")]
+                    [InlineKeyboardButton("✅ I Have Joined", callback_data=callback_data)]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
                 await update.message.reply_text(
-                    "🛑 **ACCESS REQUIRED**\n\n"
-                    f"To activate your **15 FREE Credits**, please join our official channel first!\n\n"
-                    f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
-                    f"**How to unlock:**\n"
+                    "🛑 <b>ACCESS REQUIRED</b>\n\n"
+                    f"To activate your <b>15 FREE Credits</b>, please join our official channel first!\n\n"
+                    f"📢 <b>Official Channel:</b> {CHANNEL_LINK}\n\n"
+                    f"<b>How to unlock:</b>\n"
                     f"1️⃣ Click the link above or button below\n"
-                    f"2️⃣ Tap **JOIN** in the channel\n"
-                    f"3️⃣ Come back and tap **'✅ I Have Joined'**\n\n"
-                    f"_We use this to prevent spam bots and support our community._ 🎁",
+                    f"2️⃣ Tap <b>JOIN</b> in the channel\n"
+                    f"3️⃣ Come back and tap <b>'✅ I Have Joined'</b>\n\n"
+                    f"<i>We use this to prevent spam bots and support our community.</i> 🎁",
                     reply_markup=reply_markup,
-                    parse_mode='Markdown'
+                    parse_mode='HTML'
                 )
                 return  # 🚨 关键！阻止后续逻辑执行，不发放积分！
                 
@@ -446,34 +479,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(
-                "⚠️ **Verification Required**\n\n"
+                "⚠️ <b>Verification Required</b>\n\n"
                 f"We need to verify your channel membership, but encountered a technical issue.\n\n"
-                f"📢 **Official Channel:** {CHANNEL_LINK}\n\n"
-                f"**Please try:**\n"
+                f"📢 <b>Official Channel:</b> {CHANNEL_LINK}\n\n"
+                f"<b>Please try:</b>\n"
                 f"1️⃣ Click the link above to join our channel\n"
                 f"2️⃣ Wait a few seconds\n"
-                f"3️⃣ Tap **'✅ Try Again'**\n\n"
-                f"_If this persists, please contact support. Error: {str(e)[:50]}_",
+                f"3️⃣ Tap <b>'✅ Try Again'</b>\n\n"
+                f"<i>If this persists, please contact support.</i>",
                 reply_markup=reply_markup,
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
             return  # 🚨 阻止未验证用户继续使用
     
-    # Check for referral code in /start command
-    referrer_id = None
-    is_new_user = False
-    
-    if context.args and len(context.args) > 0:
-        try:
-            # Referral format: /start ref_123456789
-            ref_code = context.args[0]
-            if ref_code.startswith('ref_'):
-                referrer_id = int(ref_code[4:])
-                logger.info(f"User {user.id} started with referral code from {referrer_id}")
-        except:
-            pass
-    
     # Check if this is a new user
+    is_new_user = False
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user.id,))
@@ -515,8 +535,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_data['credits'] += REFERRAL_REWARD_INVITEE
                 
                 referral_bonus_message = (
-                    f"\n🎁 **Referral Bonus!**\n"
-                    f"You got **+{REFERRAL_REWARD_INVITEE} extra credits** from invitation!\n\n"
+                    f"\n🎁 <b>Referral Bonus!</b>\n"
+                    f"You got <b>+{REFERRAL_REWARD_INVITEE} extra credits</b> from invitation!\n\n"
                 )
                 
                 logger.info(f"Referral: {referrer_id} invited {user.id}")
@@ -526,31 +546,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(
                         chat_id=referrer_id,
                         text=(
-                            f"🎉 **Someone used your invite link!**\n\n"
-                            f"You earned **+{REFERRAL_REWARD_INVITER} credits**!\n"
+                            f"🎉 <b>Someone used your invite link!</b>\n\n"
+                            f"You earned <b>+{REFERRAL_REWARD_INVITER} credits</b>!\n"
                             f"Keep sharing: /invite"
                         ),
-                        parse_mode='Markdown'
+                        parse_mode='HTML'
                     )
                 except:
                     pass
     
     welcome_message = (
-        f"🔥 **Welcome to Lili AI, {user.first_name}!**\n\n"
+        f"🔥 <b>Welcome to Lili AI!</b>\n\n"
         f"{referral_bonus_message}"
-        f"💎 You start with **{user_data['credits']} FREE credits**!\n\n"
-        f"🎲 **/roll** - Get your AI waifu (1 credit)\n"
-        f"🎥 **Animate her** - Make it move! ({COST_VIDEO} credits)\n\n"
-        f"🆓 **FREE Credits:**\n"
-        f"• **/checkin** - Daily +{CHECKIN_REWARD} credits\n"
-        f"• **/invite** - +{REFERRAL_REWARD_INVITER} credits per friend\n\n"
-        f"💳 **/buy** - Instant recharge ($4.99+)\n"
-        f"💰 **/balance** - Check your status\n\n"
-        f"💡 _Pro tip: Check in for 5 days = 1 FREE video!_\n"
-        f"_Millions of unique waifus waiting..._"
+        f"💎 You start with <b>{user_data['credits']} FREE credits</b>!\n\n"
+        f"🎲 <b>/roll</b> - Get your AI waifu (1 credit)\n"
+        f"🎥 <b>Animate her</b> - Make it move! ({COST_VIDEO} credits)\n\n"
+        f"🆓 <b>FREE Credits:</b>\n"
+        f"• <b>/checkin</b> - Daily +{CHECKIN_REWARD} credits\n"
+        f"• <b>/invite</b> - +{REFERRAL_REWARD_INVITER} credits per friend\n\n"
+        f"💳 <b>/buy</b> - Instant recharge ($4.99+)\n"
+        f"💰 <b>/balance</b> - Check your status\n\n"
+        f"💡 <i>Pro tip: Check in for 5 days = 1 FREE video!</i>\n"
+        f"<i>Millions of unique waifus waiting...</i>"
     )
     
-    await update.message.reply_text(welcome_message, parse_mode='Markdown')
+    await update.message.reply_text(welcome_message, parse_mode='HTML')
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1510,11 +1530,12 @@ async def view_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Build message
         inviter_text = f"`{user_info['invited_by']}`" if user_info['invited_by'] else "Direct"
         username_text = f"@{user_info['username']}" if user_info['username'] else "No username"
+        safe_name = safe_markdown_name(user_info['first_name'])
         
         message = (
             f"👤 **User Details**\n\n"
             f"🆔 **ID:** `{user_info['user_id']}`\n"
-            f"👤 **Name:** {user_info['first_name']}\n"
+            f"👤 **Name:** {safe_name}\n"
             f"🔖 **Username:** {username_text}\n"
             f"📅 **Joined:** {created_at}\n\n"
             
@@ -1536,8 +1557,8 @@ async def view_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if paid_referrals:
             message += f"**💎 Top Paying Referrals:**\n"
             for i, ref in enumerate(paid_referrals[:5], 1):
-                ref_name = ref['username'] or ref['first_name'] or f"User_{ref['user_id']}"
-                message += f"{i}. {ref_name}: ${ref['total_paid']:.2f}\n"
+                ref_display = ref['username'] or safe_markdown_name(ref['first_name']) or f"User_{ref['user_id']}"
+                message += f"{i}. {ref_display}: ${ref['total_paid']:.2f}\n"
             if len(paid_referrals) > 5:
                 message += f"_...and {len(paid_referrals) - 5} more_\n"
             message += "\n"
@@ -1619,7 +1640,8 @@ async def view_orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
         
         # Build message
-        message = f"📋 **Payment History for {user_info['first_name']}** (`{target_user_id}`)\n\n"
+        safe_name = safe_markdown_name(user_info['first_name'])
+        message = f"📋 **Payment History for {safe_name}** (`{target_user_id}`)\n\n"
         
         for order in orders:
             status_emoji = {
@@ -1768,7 +1790,8 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         for i, u in enumerate(top_users, 1):
-            message += f"{i}. {u['first_name']} - {u['credits']} credits\n"
+            safe_name = safe_markdown_name(u['first_name'])
+            message += f"{i}. {safe_name} - {u['credits']} credits\n"
         
         await update.message.reply_text(message, parse_mode='Markdown')
         
@@ -2167,6 +2190,19 @@ async def check_join_status_callback(update: Update, context: ContextTypes.DEFAU
         await query.edit_message_text("✅ Channel verification is not required.")
         return
     
+    # 🎁 解析回调数据，提取推荐码
+    referrer_id = None
+    callback_data = query.data
+    if ':' in callback_data:
+        # Format: check_join_status:123456789
+        parts = callback_data.split(':')
+        if len(parts) == 2 and parts[1] != 'None':
+            try:
+                referrer_id = int(parts[1])
+                logger.info(f"Found referrer {referrer_id} in callback data for user {user.id}")
+            except:
+                pass
+    
     try:
         # 再次检查用户的频道成员状态
         member = await context.bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user.id)
@@ -2186,27 +2222,75 @@ async def check_join_status_callback(update: Update, context: ContextTypes.DEFAU
                 db.get_or_create_user(
                     user_id=user.id,
                     username=user.username,
-                    first_name=user.first_name
+                    first_name=user.first_name,
+                    invited_by=referrer_id  # 🎁 传递推荐人ID
                 )
                 
+                # 🎁 处理推荐奖励
+                referral_bonus_message = ""
+                if referrer_id and referrer_id != user.id:
+                    with db.get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT user_id, first_name FROM users WHERE user_id = ?", (referrer_id,))
+                        referrer = cursor.fetchone()
+                        
+                        if referrer:
+                            # Give bonus to new user
+                            db.add_credits(
+                                user.id, 
+                                REFERRAL_REWARD_INVITEE, 
+                                f"Referral bonus from user {referrer_id}"
+                            )
+                            
+                            # Give bonus to referrer
+                            db.add_credits(
+                                referrer_id,
+                                REFERRAL_REWARD_INVITER,
+                                f"Invited user {user.id}"
+                            )
+                            
+                            referral_bonus_message = (
+                                f"\n🎁 <b>Referral Bonus!</b>\n"
+                                f"You got <b>+{REFERRAL_REWARD_INVITEE} extra credits</b> from invitation!\n\n"
+                            )
+                            
+                            logger.info(f"Referral: {referrer_id} invited {user.id}")
+                            
+                            # Notify referrer
+                            try:
+                                await context.bot.send_message(
+                                    chat_id=referrer_id,
+                                    text=(
+                                        f"🎉 <b>Someone used your invite link!</b>\n\n"
+                                        f"You earned <b>+{REFERRAL_REWARD_INVITER} credits</b>!\n"
+                                        f"Keep sharing: /invite"
+                                    ),
+                                    parse_mode='HTML'
+                                )
+                            except:
+                                pass
+                
+                total_credits = NEW_USER_BONUS + (REFERRAL_REWARD_INVITEE if referrer_id else 0)
+                
                 await query.edit_message_text(
-                    "🎉 **Verification Success!**\n\n"
+                    "🎉 <b>Verification Success!</b>\n\n"
                     "✅ You are now a verified member!\n"
-                    f"💎 **+{NEW_USER_BONUS} Credits** have been added to your account.\n\n"
+                    f"💎 <b>+{total_credits} Credits</b> have been added to your account.\n"
+                    f"{referral_bonus_message}"
                     "🎲 Use /roll to generate your first AI waifu!\n"
                     "✅ Use /checkin daily for FREE credits!\n\n"
-                    "_Let's make some magic!_ ✨",
-                    parse_mode='Markdown'
+                    "<i>Let's make some magic!</i> ✨",
+                    parse_mode='HTML'
                 )
             else:
                 # 老用户：已经验证过了
                 await query.edit_message_text(
-                    "✅ **Welcome Back!**\n\n"
+                    "✅ <b>Welcome Back!</b>\n\n"
                     "You are already verified and have full access.\n\n"
                     "🎲 /roll - Generate AI waifu\n"
                     "💰 /balance - Check your credits\n"
                     "✅ /checkin - Daily bonus",
-                    parse_mode='Markdown'
+                    parse_mode='HTML'
                 )
         else:
             # ❌ 用户还是没有加入频道
@@ -2336,7 +2420,7 @@ def main():
     application.add_handler(CommandHandler("storage", storage_status_command))
     
     # Callback query handlers
-    application.add_handler(CallbackQueryHandler(check_join_status_callback, pattern="^check_join_status$"))
+    application.add_handler(CallbackQueryHandler(check_join_status_callback, pattern="^check_join_status"))
     application.add_handler(CallbackQueryHandler(video_callback, pattern="^video:"))
     application.add_handler(CallbackQueryHandler(package_selection_callback, pattern="^package:"))
     application.add_handler(CallbackQueryHandler(plisio_payment_callback, pattern="^pay_plisio:"))

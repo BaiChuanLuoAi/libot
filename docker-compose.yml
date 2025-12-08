@@ -43,8 +43,8 @@ services:
     container_name: lili-bot
     restart: unless-stopped
     volumes:
-      # 持久化数据库
-      - ./tg_bot/bot_users.db:/app/bot_users.db
+      # 持久化数据目录（挂载目录而不是文件）
+      - ./tg_bot/data:/app/data
       # 持久化配置
       - ./tg_bot/config.env:/app/config.env
       # 持久化提示词（可选）
