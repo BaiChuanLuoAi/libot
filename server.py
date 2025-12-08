@@ -73,11 +73,11 @@ ADMIN_IDS_STR = os.getenv('ADMIN_IDS', '')
 ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(',') if id.strip()] if ADMIN_IDS_STR else []
 
 # ComfyUI 直接API配置（图像生成）
-COMFYUI_API_URL = "http://dx.qyxc.vip:18188"  # ComfyUI服务器地址
+COMFYUI_API_URL = os.getenv('COMFYUI_API_URL', "http://dx.qyxc.vip:18188")  # ComfyUI服务器地址
 COMFYUI_CLIENT_ID = str(uuid.uuid4())
 
 # ComfyUI 视频生成配置 - 直连端点（不再使用RunPod）
-COMFYUI_VIDEO_API_URL = "https://n008.unicorn.org.cn:20155"  # 视频生成专用ComfyUI端点
+COMFYUI_VIDEO_API_URL = os.getenv('COMFYUI_VIDEO_API_URL', "https://n008.unicorn.org.cn:20155")  # 视频生成专用ComfyUI端点
 COMFYUI_VIDEO_CLIENT_ID = str(uuid.uuid4())
 
 # 目录配置
@@ -600,6 +600,7 @@ def check_comfyui_video_status(prompt_id):
         response = requests.get(url, timeout=30)
         
         if response.status_code != 200:
+            print(f"⚠️ ComfyUI history API 返回状态码: {response.status_code}")
             return None
         
         history = response.json()
@@ -609,8 +610,17 @@ def check_comfyui_video_status(prompt_id):
         
         task_info = history[prompt_id]
         
+        # 调试：打印任务信息的关键字段
+        print(f"📋 任务 {prompt_id} 信息:")
+        print(f"  → 包含的键: {list(task_info.keys())}")
+        if "status" in task_info:
+            print(f"  → status: {task_info['status']}")
+        if "outputs" in task_info:
+            print(f"  → outputs keys: {list(task_info['outputs'].keys())}")
+        
         # 检查是否完成
         if "outputs" in task_info and task_info["outputs"]:
+            print(f"✅ 任务完成，返回 outputs")
             return {
                 "status": "COMPLETED",
                 "outputs": task_info["outputs"]
@@ -619,11 +629,13 @@ def check_comfyui_video_status(prompt_id):
         # 检查是否正在运行
         status_data = task_info.get("status", {})
         if status_data.get("status_str") == "success":
+            print(f"✅ 任务成功（status_str），返回 outputs")
             return {
                 "status": "COMPLETED",
                 "outputs": task_info.get("outputs", {})
             }
         elif status_data.get("completed", False):
+            print(f"✅ 任务完成（completed），返回 outputs")
             return {
                 "status": "COMPLETED",
                 "outputs": task_info.get("outputs", {})
@@ -631,38 +643,69 @@ def check_comfyui_video_status(prompt_id):
         
         # 检查是否有错误
         if "error" in task_info or status_data.get("status_str") == "error":
+            print(f"❌ 任务失败")
             return {"status": "FAILED"}
         
         # 否则仍在处理中
+        print(f"⏳ 任务处理中...")
         return {"status": "IN_PROGRESS"}
     
     except Exception as e:
         print(f"检查ComfyUI状态时出错: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def download_comfyui_video(outputs):
     """从ComfyUI下载生成的视频 - 与图片提取方式一致"""
     try:
-        # 查找视频输出节点（SaveVideo）
+        # 调试：打印完整的outputs结构
+        print(f"📦 ComfyUI返回的outputs结构:")
+        import json
+        print(json.dumps(outputs, indent=2, ensure_ascii=False))
+        
+        # 查找视频输出节点（SaveVideo或VHS_VideoCombine）
         for node_id, node_output in outputs.items():
+            print(f"  → 节点 {node_id}: {list(node_output.keys())}")
+            
+            # 尝试多种可能的输出格式
             if "videos" in node_output:
                 videos = node_output["videos"]
+                print(f"  → 找到videos字段，内容: {videos}")
                 if videos and len(videos) > 0:
                     video_info = videos[0]
                     filename = video_info.get("filename")
                     subfolder = video_info.get("subfolder", "")
                     
                     if filename:
+                        print(f"  → 提取视频文件: {filename}, 子目录: {subfolder}")
                         # 使用与图片一致的下载方式
                         video_data = get_comfyui_video(filename, subfolder)
                         if video_data:
                             return video_data
+            
+            # 尝试查找 gifs 字段（某些节点可能输出gif）
+            elif "gifs" in node_output:
+                gifs = node_output["gifs"]
+                print(f"  → 找到gifs字段，内容: {gifs}")
+                if gifs and len(gifs) > 0:
+                    gif_info = gifs[0]
+                    filename = gif_info.get("filename")
+                    subfolder = gif_info.get("subfolder", "")
+                    
+                    if filename:
+                        print(f"  → 提取GIF文件: {filename}, 子目录: {subfolder}")
+                        video_data = get_comfyui_video(filename, subfolder)
+                        if video_data:
+                            return video_data
         
-        print("❌ 未找到视频输出")
+        print("❌ 未找到视频输出（检查了videos和gifs字段）")
         return None
     
     except Exception as e:
         print(f"下载ComfyUI视频时出错: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def get_comfyui_video(filename, subfolder=""):
@@ -1650,6 +1693,8 @@ if __name__ == '__main__':
     print(f"🔑 API Key: {SERVER_AUTH_KEY}")
     print(f"📁 文件目录: {IMAGES_DIR}")
     print(f"🌐 端口: 5010")
+    print(f"🎨 图像ComfyUI: {COMFYUI_API_URL}")
+    print(f"🎬 视频ComfyUI: {COMFYUI_VIDEO_API_URL}")
     print("="*60)
     
     app.run(host='0.0.0.0', port=5010, threaded=True)

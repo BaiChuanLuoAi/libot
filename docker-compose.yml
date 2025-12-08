@@ -16,6 +16,7 @@ services:
       - ./logs:/app/logs
     environment:
       - COMFYUI_API_URL=${COMFYUI_API_URL:-http://dx.qyxc.vip:18188}
+      - COMFYUI_VIDEO_API_URL=${COMFYUI_VIDEO_API_URL:-https://n008.unicorn.org.cn:20155}
       - SERVER_AUTH_KEY=${API_KEY}
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
