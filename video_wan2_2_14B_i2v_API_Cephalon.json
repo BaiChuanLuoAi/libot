@@ -7,7 +7,7 @@
     },
     "class_type": "CLIPLoader",
     "_meta": {
-      "title": "加载CLIP"
+      "title": "CLIP加载器"
     }
   },
   "85": {
@@ -40,13 +40,13 @@
     },
     "class_type": "KSamplerAdvanced",
     "_meta": {
-      "title": "K采样器（高级）"
+      "title": "K采样器(高级)"
     }
   },
   "86": {
     "inputs": {
       "add_noise": "enable",
-      "noise_seed": 1000493471825364,
+      "noise_seed": 118170201156043,
       "steps": 4,
       "cfg": 1,
       "sampler_name": "euler",
@@ -73,7 +73,7 @@
     },
     "class_type": "KSamplerAdvanced",
     "_meta": {
-      "title": "K采样器（高级）"
+      "title": "K采样器(高级)"
     }
   },
   "87": {
@@ -94,7 +94,7 @@
   },
   "89": {
     "inputs": {
-      "text": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+      "text": "bright colors, overexposed, static, blurred details, subtitles, style, artwork, painting, picture, still, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, malformed limbs, fused fingers, still picture, cluttered background, three legs, many people in the background, walking backwards, censored, mosaic, lowres, mutated, extra limbs, watermark, text, signature, blurry, grainy, artifacts, distortion, bad anatomy, poorly rendered genitals, unnatural skin tones, frozen frame, no motion",
       "clip": [
         "84",
         0
@@ -102,7 +102,7 @@
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
-      "title": "CLIP Text Encode (Negative Prompt)"
+      "title": "CLIP文本编码器"
     }
   },
   "90": {
@@ -111,12 +111,12 @@
     },
     "class_type": "VAELoader",
     "_meta": {
-      "title": "加载VAE"
+      "title": "VAE加载器"
     }
   },
   "93": {
     "inputs": {
-      "text": "smile.",
+      "text": "masterpiece, best quality, ultra-detailed, absurdres, cinematic lighting, dynamic erotic pose, uncensored nsfw, highly dynamic motion, exaggerated perspective, depth of field, film grain, hyperrealistic skin, glistening body, intense arousal, sweat dripping, orgasmic expression, perfect anatomy, erotic fluids, surreal erotic atmosphere, breathtaking beauty, 8k uhd, raw photo, extreme motion blur, fluid motion, realistic physics, chaotic beauty, perfect motion trails",
       "clip": [
         "84",
         0
@@ -124,7 +124,7 @@
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
-      "title": "CLIP Text Encode (Positive Prompt)"
+      "title": "CLIP文本编码器"
     }
   },
   "94": {
@@ -143,11 +143,11 @@
   "95": {
     "inputs": {
       "unet_name": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
-      "weight_dtype": "default"
+      "weight_dtype": "fp8_e4m3fn"
     },
     "class_type": "UNETLoader",
     "_meta": {
-      "title": "UNet加载器"
+      "title": "UNET加载器"
     }
   },
   "96": {
@@ -157,12 +157,12 @@
     },
     "class_type": "UNETLoader",
     "_meta": {
-      "title": "UNet加载器"
+      "title": "UNET加载器"
     }
   },
   "97": {
     "inputs": {
-      "image": "ComfyUI_00027_.png"
+      "image": "photo_2025-12-09_00-00-28.jpg"
     },
     "class_type": "LoadImage",
     "_meta": {
@@ -171,8 +171,8 @@
   },
   "98": {
     "inputs": {
-      "width": 640,
-      "height": 640,
+      "width": 480,
+      "height": 832,
       "length": 81,
       "batch_size": 1,
       "positive": [
@@ -208,7 +208,7 @@
     },
     "class_type": "LoraLoaderModelOnly",
     "_meta": {
-      "title": "LoRA加载器（仅模型）"
+      "title": "LoRA加载器(仅模型)"
     }
   },
   "102": {
@@ -222,7 +222,7 @@
     },
     "class_type": "LoraLoaderModelOnly",
     "_meta": {
-      "title": "LoRA加载器（仅模型）"
+      "title": "LoRA加载器(仅模型)"
     }
   },
   "103": {
@@ -235,7 +235,7 @@
     },
     "class_type": "ModelSamplingSD3",
     "_meta": {
-      "title": "采样算法（SD3）"
+      "title": "模型采样算法SD3"
     }
   },
   "104": {
@@ -248,7 +248,7 @@
     },
     "class_type": "ModelSamplingSD3",
     "_meta": {
-      "title": "采样算法（SD3）"
+      "title": "模型采样算法SD3"
     }
   },
   "108": {
