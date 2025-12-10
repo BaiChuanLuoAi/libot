@@ -73,10 +73,17 @@ REFERRAL_REWARD_INVITEE = 5   # 被邀请人额外获得5积分（总共20积分
 
 # Payment Configuration - Plisio
 PLISIO_SECRET_KEY = os.getenv('PLISIO_SECRET_KEY', '')
-SERVER_DOMAIN = os.getenv('SERVER_DOMAIN', 'https://www.lilibot.top')
+SERVER_DOMAIN = os.getenv('SERVER_DOMAIN', 'https://lilibot.top')
 
 # Payment Packages - 三层套餐设计
 PACKAGES = {
+    'test': {
+        'price': 1.00,
+        'credits': 10,
+        'name': '🧪 Test Pack',
+        'desc': 'Testing only',
+        'videos': 0
+    },
     'mini': {
         'price': 4.99,
         'credits': 60,
@@ -1012,8 +1019,11 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     has_payment_methods = False
     
-    # Plisio 加密货币支付 - 三个套餐
+    # Plisio 加密货币支付 - 四个套餐
     if PLISIO_SECRET_KEY:
+        keyboard.append([
+            InlineKeyboardButton("🧪 Test ($1.00)", callback_data="package:test"),
+        ])
         keyboard.append([
             InlineKeyboardButton("🎓 Student ($4.99)", callback_data="package:mini"),
         ])
@@ -1028,6 +1038,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if has_payment_methods:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        test = PACKAGES['test']
         mini = PACKAGES['mini']
         pro = PACKAGES['pro']
         ultra = PACKAGES['ultra']
@@ -1035,6 +1046,8 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = (
             "💰 **TOP UP BALANCE**\n\n"
             "🔓 _Unlock uncensored videos & priority queue!_\n\n"
+            f"🧪 **Test Pack - ${test['price']}**\n"
+            f"   👉 **{test['credits']} Credits** (testing only)\n\n"
             f"🎓 **Student Pack - ${mini['price']}**\n"
             f"   👉 **{mini['credits']} Credits** ({mini['videos']} videos + images)\n\n"
             f"🔥 **Pro Pack - ${pro['price']}** {pro.get('badge', '')}\n"
@@ -1170,14 +1183,17 @@ async def plisio_payment_callback(update: Update, context: ContextTypes.DEFAULT_
                         txn_id = invoice_data.get("txn_id")
                         
                         if invoice_url:
-                            # 创建待处理记录，使用 Plisio 的 txn_id 作为外部引用
+                            # 使用 Plisio 的 txn_id 作为主要引用（如果没有则使用 order_id）
+                            external_ref = txn_id or order_id
+                            
+                            # 创建待处理记录
                             db.create_pending_payment(
                                 user_id=user.id,
                                 amount=credits,
                                 money_amount=float(amount),
                                 currency='USD',
                                 provider='plisio',
-                                external_ref=txn_id or order_id,
+                                external_ref=external_ref,
                                 description=f"Plisio payment: {package['name']}"
                             )
                             
@@ -1198,8 +1214,8 @@ async def plisio_payment_callback(update: Update, context: ContextTypes.DEFAULT_
                                 reply_markup=reply_markup,
                                 parse_mode='Markdown'
                             )
-                            # 简洁日志：只记录订单ID
-                            logger.info(f"💳 Payment: {order_id}")
+                            # 详细日志：记录完整信息
+                            logger.info(f"✅ Plisio invoice created for user {user.id}: {order_id}, txn_id: {txn_id}")
                         else:
                             await query.message.reply_text("❌ Failed to create payment invoice. Please try again.")
                             logger.error(f"Plisio: No invoice URL in response: {result}")

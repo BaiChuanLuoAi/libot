@@ -17,6 +17,7 @@ import requests
 import threading
 import hmac
 import hashlib
+import hmac
 import sys
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
@@ -30,10 +31,15 @@ load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), 'tg_bot'))
 try:
     from database import Database
-    bot_db = Database(os.path.join(os.path.dirname(__file__), 'tg_bot', 'bot_users.db'))
-except ImportError:
+    # 数据库在 tg_bot/data 目录下
+    bot_db = Database(os.path.join(os.path.dirname(__file__), 'tg_bot', 'data', 'bot_users.db'))
+    print("✅ Bot database initialized successfully")
+except ImportError as e:
     bot_db = None
-    print("⚠️  Bot database not available")
+    print(f"⚠️  Bot database not available: {e}")
+except Exception as e:
+    bot_db = None
+    print(f"⚠️  Bot database initialization failed: {e}")
 
 app = Flask(__name__)
 CORS(app, resources={
@@ -456,25 +462,19 @@ def submit_to_comfyui(workflow):
         }
         
         url = f"{COMFYUI_API_URL}/prompt"
-        print(f"  → 连接到: {url}")
-        print(f"  → Client ID: {COMFYUI_CLIENT_ID}")
         
         response = requests.post(
             url,
             json=prompt_data,
-            timeout=120  # 2分钟超时
+            timeout=120
         )
-        print(f"  → HTTP状态: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"  → 响应内容: {response.text[:200]}")
+            print(f"❌ ComfyUI error {response.status_code}: {response.text[:100]}")
         
         response.raise_for_status()
         result = response.json()
-        print(f"  → 响应: {result}")
-        
         prompt_id = result.get("prompt_id")
-        print(f"  → Prompt ID: {prompt_id}")
         return prompt_id
     except requests.exceptions.ConnectionError as e:
         print(f"❌ ComfyUI连接错误: 无法连接到 {COMFYUI_API_URL}")
@@ -865,7 +865,7 @@ def get_storage_status():
 @app.route('/')
 def index():
     """返回前端页面"""
-    return send_from_directory('.', 'index.html')
+    return send_from_directory('static', 'index.html')
 
 # ===== 支付 Webhook =====
 def send_telegram_notification(user_id: int, message: str):
@@ -917,39 +917,42 @@ def webhook_plisio():
             # POST 方式
             payload = request.json if request.is_json else request.form.to_dict()
         
-        print(f"📥 Plisio webhook received: {payload}")
-        
-        # 验证回调签名（Plisio 使用 verify_hash）
-        verify_hash = payload.get('verify_hash')
-        
-        if PLISIO_SECRET_KEY and verify_hash:
-            # 构建验证字符串
-            # 按照 Plisio 文档：移除 verify_hash 后按字母顺序排序参数
-            params_to_verify = {k: v for k, v in payload.items() if k != 'verify_hash'}
-            sorted_params = sorted(params_to_verify.items())
-            verify_string = json.dumps(sorted_params, separators=(',', ':')) + PLISIO_SECRET_KEY
-            
-            expected_hash = hashlib.sha1(verify_string.encode()).hexdigest()
-            
-            if verify_hash != expected_hash:
-                print("❌ Plisio signature verification failed")
-                print(f"   Expected: {expected_hash}")
-                print(f"   Received: {verify_hash}")
-                return jsonify({"error": "Invalid signature"}), 401
+        # 📝 生产日志：仅记录关键信息
+        print(f"📥 Plisio webhook: {request.method}")
         
         # 解析 Plisio 回调数据
-        order_id = payload.get('order_number') or payload.get('order_id')
+        order_number = payload.get('order_number')
+        txn_id = payload.get('txn_id') or payload.get('id')  # Plisio 的交易 ID
         status = payload.get('status')  # Plisio 状态: 'pending', 'completed', 'error', 'cancelled'
-        amount = payload.get('amount')  # 源货币金额 (USD)
+        
+        # 金额信息
+        source_amount = payload.get('source_amount')  # 预期金额（USD）
+        invoice_sum = payload.get('invoice_sum')  # 发票金额（加密货币）
+        amount = payload.get('amount')  # 实际到账金额（加密货币）
+        pending_amount = payload.get('pending_amount', '0')  # 待确认金额
         currency = payload.get('source_currency', 'USD')
+        crypto_currency = payload.get('currency') or payload.get('psys_cid', 'BTC')
         
-        if not order_id:
-            print(f"⚠️  Missing order_id in Plisio callback")
-            return jsonify({"error": "Missing order_id"}), 400
+        # 检查是否超额支付
+        expected_amount = float(invoice_sum) if invoice_sum else 0
+        actual_amount = float(amount) if amount else 0
+        is_overpaid = actual_amount > expected_amount if expected_amount > 0 else False
+        overpaid_percentage = ((actual_amount / expected_amount) * 100) if expected_amount > 0 else 100
         
-        # 从 order_id 中提取 user_id 和 package_key（格式：user_{user_id}_{package_key}_{timestamp}）
+        # 优先使用 txn_id，如果没有则使用 order_number
+        external_ref = txn_id or order_number
+        
+        if not external_ref:
+            print(f"❌ Missing transaction reference")
+            return jsonify({"error": "Missing transaction reference"}), 400
+        
+        # 从 order_number 中提取 user_id 和 package_key（格式：user_{user_id}_{package_key}_{timestamp}）
+        if not order_number:
+            print(f"⚠️  Missing order_number, cannot extract user info")
+            return jsonify({"error": "Missing order_number"}), 400
+            
         try:
-            parts = order_id.split('_')
+            parts = order_number.split('_')
             user_id = int(parts[1]) if len(parts) > 1 else None
             package_key = parts[2] if len(parts) > 2 else 'pro'  # 默认 pro 套餐
         except:
@@ -957,11 +960,12 @@ def webhook_plisio():
             package_key = 'pro'
         
         if not user_id:
-            print(f"⚠️  Cannot extract user_id from order_id: {order_id}")
-            return jsonify({"error": "Invalid order_id format"}), 400
+            print(f"❌ Invalid order format: {order_number}")
+            return jsonify({"error": "Invalid order_number format"}), 400
         
         # 套餐配置（与 bot.py 中的 PACKAGES 保持一致）
         PACKAGES = {
+            'test': {'credits': 10, 'price': 1.00, 'name': '🧪 Test Pack'},
             'mini': {'credits': 60, 'price': 4.99, 'name': '🎓 Student Pack'},
             'pro': {'credits': 130, 'price': 9.99, 'name': '🔥 Pro Pack'},
             'ultra': {'credits': 450, 'price': 29.99, 'name': '👑 Whale Pack'}
@@ -971,81 +975,100 @@ def webhook_plisio():
         package = PACKAGES.get(package_key, PACKAGES['pro'])
         credits = package['credits']
         
-        print(f"📋 Order: {order_id}, User: {user_id}, Package: {package_key}, Status: {status}")
-        
         # 根据状态处理
         if status == 'pending':
-            # 支付待确认（已创建但未完成）
-            print(f"⏳ Pending payment for user {user_id}")
+            # 支付待确认
             return jsonify({"status": "ok"}), 200
             
         elif status == 'completed':
             # 支付成功
+            
             # 检查是否已处理
-            if bot_db.check_payment_exists(order_id):
-                print(f"✅ Payment {order_id} already processed")
+            if (txn_id and bot_db.check_payment_exists(txn_id)) or \
+               (order_number and bot_db.check_payment_exists(order_number)):
                 return jsonify({"status": "already_processed"}), 200
+            
+            # 使用实际支付的 USD 金额（如果有的话）
+            usd_amount = float(source_amount) if source_amount else package['price']
             
             # 添加积分
             success = bot_db.add_credits(
                 user_id=user_id,
                 amount=credits,
-                money_amount=float(amount) if amount else package['price'],
+                money_amount=usd_amount,
                 currency=currency,
                 provider='plisio',
-                external_ref=order_id,
+                external_ref=external_ref,  # 使用 txn_id 或 order_number
                 description=f"Plisio crypto payment: {package['name']}"
             )
             
             if success:
-                print(f"✅ Added {credits} credits to user {user_id}")
+                # 简洁日志
+                overpaid_log = f" (overpaid {overpaid_percentage:.0f}%)" if is_overpaid else ""
+                print(f"✅ Payment: User {user_id}, +{credits} credits, ${usd_amount}{overpaid_log}")
+                
+                # 构建消息（包含 overpaid 提示）
+                overpaid_msg = ""
+                if is_overpaid:
+                    overpaid_msg = f"\n💡 You paid {overpaid_percentage:.0f}% ({actual_amount:.8f} {crypto_currency}) - thank you for the tip! 💝"
                 
                 # 发送 Telegram 通知给用户
                 send_telegram_notification(
                     user_id,
                     f"💰 **Payment Successful!**\n\n"
-                    f"💵 Amount: ${amount} {currency}\n"
+                    f"💵 Amount: ${usd_amount} {currency}\n"
                     f"💎 Credits: +{credits}\n"
-                    f"📋 Order: `{order_id}`\n\n"
+                    f"📋 Order: `{order_number}`{overpaid_msg}\n\n"
                     f"🎉 Your credits have been added!\n"
                     f"Use /balance to check your balance."
                 )
                 
                 # 🔔 通知管理员（实时入账通知）
+                overpaid_admin_msg = f"\n💰 Overpaid: {overpaid_percentage:.0f}%" if is_overpaid else ""
                 notify_admin(
                     f"💰 **NEW SALE!** 💰\n\n"
                     f"👤 User: `{user_id}`\n"
-                    f"💵 Amount: **${amount} {currency}**\n"
+                    f"💵 Amount: **${usd_amount} {currency}**\n"
                     f"💎 Credits: **{credits}**\n"
-                    f"💳 Method: `Plisio (Crypto)`\n"
+                    f"💳 Method: `Plisio ({crypto_currency})`{overpaid_admin_msg}\n"
                     f"📦 Package: `{package['name']}`\n"
-                    f"📋 Order: `{order_id}`\n\n"
+                    f"📋 Order: `{order_number}`\n"
+                    f"🆔 TXN: `{txn_id}`\n\n"
                     f"🎉 Cha-ching! 💸"
                 )
                 
                 return jsonify({"status": "success", "credits_added": credits}), 200
             else:
+                print(f"❌ Failed to add credits")
                 return jsonify({"error": "Failed to add credits"}), 500
             
-        elif status in ['error', 'cancelled', 'expired']:
-            print(f"❌ Payment {status}: {order_id}")
+        elif status in ['error', 'cancelled', 'expired', 'cancelled duplicate']:
             
             # 通知用户
+            status_messages = {
+                'error': 'encountered an error',
+                'cancelled': 'was cancelled',
+                'expired': 'expired',
+                'cancelled duplicate': 'was cancelled (duplicate)'
+            }
+            status_msg = status_messages.get(status, status)
+            
             send_telegram_notification(
                 user_id,
                 f"❌ **Payment {status.title()}**\n\n"
-                f"📋 Order: `{order_id}`\n\n"
-                f"Please try again or contact support if you need help."
+                f"Your payment {status_msg}.\n"
+                f"📋 Order: `{order_number}`\n\n"
+                f"Please try again or contact support if you need help.\n"
+                f"Use /support to contact admin."
             )
             
             return jsonify({"status": "ok"}), 200
         
         # 其他状态
-        print(f"ℹ️  Unhandled Plisio status: {status}")
         return jsonify({"status": "ok"}), 200
         
     except Exception as e:
-        print(f"❌ Plisio webhook error: {e}")
+        print(f"❌ Webhook error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -1055,19 +1078,13 @@ def chat_completions():
     """统一的OpenAI兼容接口"""
     # 记录请求日志
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-    print(f"\n{'='*60}")
-    print(f"📥 收到请求 - IP: {client_ip}")
-    print(f"{'='*60}")
     
     # 验证API Key
     auth_header = request.headers.get('Authorization')
-    print(f"🔑 Authorization Header: {auth_header[:30]}..." if auth_header else "🔑 No Authorization Header")
     
     if not auth_header or auth_header.replace("Bearer ", "") != SERVER_AUTH_KEY:
-        print(f"❌ 认证失败")
-        return jsonify({"error": "Unauthorized", "message": "无效的API Key"}), 401
-    
-    print(f"✅ 认证通过")
+        print(f"❌ Auth failed")
+        return jsonify({"error": "Unauthorized"}), 401
 
     try:
         data = request.json
@@ -1079,15 +1096,11 @@ def chat_completions():
         messages = data.get('messages', [])
         stream = data.get('stream', False)
         
-        print(f"📋 模型: {model}")
-        print(f"📝 消息数: {len(messages)}")
-        
         if not messages:
-            print(f"❌ 无消息内容")
             return jsonify({"error": "No messages provided"}), 400
     except Exception as e:
-        print(f"❌ 解析请求失败: {e}")
-        return jsonify({"error": f"Invalid request format: {str(e)}"}), 400
+        print(f"❌ Invalid request: {e}")
+        return jsonify({"error": "Invalid request"}), 400
     
     # 提取提示词和图片
     last_message = messages[-1]
@@ -1112,9 +1125,6 @@ def chat_completions():
     
     prompt_text = prompt_text.strip()
     
-    print(f"💬 提示词: {prompt_text[:100]}...")
-    print(f"🖼️  是否有图片: {'是' if input_image_base64 else '否'}")
-    
     # 判断服务类型
     if "video" in model.lower() or "wan" in model.lower():
         # 视频服务
@@ -1128,7 +1138,6 @@ def chat_completions():
             return handle_video_t2v(prompt_text, model, stream, data)
     else:
         # 图像服务
-        print(f"🖼️  识别为图像服务")
         return handle_image_generation(prompt_text, model, stream, data)
 
 def handle_image_generation(prompt_text, model, stream, data):
@@ -1145,7 +1154,6 @@ def handle_image_generation(prompt_text, model, stream, data):
             width = data.get('width', 1024)
             height = data.get('height', 1024)
         
-        print(f"📐 图像尺寸: {width}x{height}")
         
         # 创建工作流
         workflow = json.loads(json.dumps(IMAGE_WORKFLOW))
@@ -1155,7 +1163,6 @@ def handle_image_generation(prompt_text, model, stream, data):
         workflow["13"]["inputs"]["height"] = height
         
         # 提交到ComfyUI
-        print(f"📤 正在提交到ComfyUI: {COMFYUI_API_URL}")
         prompt_id = submit_to_comfyui(workflow)
         if not prompt_id:
             error_msg = f"ComfyUI连接失败。请检查: 1) ComfyUI是否运行 2) 地址配置: {COMFYUI_API_URL}"

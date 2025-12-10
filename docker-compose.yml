@@ -14,12 +14,18 @@ services:
       - ./files:/app/files
       # 持久化日志
       - ./logs:/app/logs
+      # 共享数据库（用于 webhook 处理）
+      - ./tg_bot:/app/tg_bot
     environment:
       - COMFYUI_API_URL=${COMFYUI_API_URL:-http://dx.qyxc.vip:18188}
       - COMFYUI_VIDEO_API_URL=${COMFYUI_VIDEO_API_URL:-https://n008.unicorn.org.cn:20155}
       - SERVER_AUTH_KEY=${API_KEY}
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
+      # Telegram 配置（用于发送支付通知）
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-8285418858:AAFtt_1rpMooqg09PNwVylkujCzaDtWHjJY}
+      - ADMIN_IDS=1667404229
+      - PLISIO_SECRET_KEY=${PLISIO_SECRET_KEY}
     networks:
       - lili-network
     healthcheck:

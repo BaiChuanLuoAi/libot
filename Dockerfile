@@ -14,8 +14,11 @@ COPY server.py .
 COPY video_wan2_2_14B_t2v_API_Cephalon.json .
 COPY video_wan2_2_14B_i2v_API_Cephalon.json .
 
+# 复制 bot database 模块（用于 webhook 处理）
+COPY tg_bot/database.py tg_bot/
+
 # 创建必要的目录
-RUN mkdir -p files/images logs
+RUN mkdir -p files/images logs tg_bot/data
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
