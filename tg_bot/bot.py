@@ -1019,11 +1019,11 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     has_payment_methods = False
     
-    # Plisio 加密货币支付 - 四个套餐
+    # Plisio 加密货币支付 - 三个套餐
     if PLISIO_SECRET_KEY:
-        keyboard.append([
-            InlineKeyboardButton("🧪 Test ($1.00)", callback_data="package:test"),
-        ])
+        # keyboard.append([
+        #     InlineKeyboardButton("🧪 Test ($1.00)", callback_data="package:test"),
+        # ])  # 测试套餐已隐藏
         keyboard.append([
             InlineKeyboardButton("🎓 Student ($4.99)", callback_data="package:mini"),
         ])
@@ -1038,7 +1038,6 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if has_payment_methods:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        test = PACKAGES['test']
         mini = PACKAGES['mini']
         pro = PACKAGES['pro']
         ultra = PACKAGES['ultra']
@@ -1046,8 +1045,6 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = (
             "💰 **TOP UP BALANCE**\n\n"
             "🔓 _Unlock uncensored videos & priority queue!_\n\n"
-            f"🧪 **Test Pack - ${test['price']}**\n"
-            f"   👉 **{test['credits']} Credits** (testing only)\n\n"
             f"🎓 **Student Pack - ${mini['price']}**\n"
             f"   👉 **{mini['credits']} Credits** ({mini['videos']} videos + images)\n\n"
             f"🔥 **Pro Pack - ${pro['price']}** {pro.get('badge', '')}\n"
@@ -1056,7 +1053,7 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👑 **Whale Pack - ${ultra['price']}**\n"
             f"   👉 **{ultra['credits']} Credits** ({ultra['videos']} videos)\n"
             f"   _+25% bonus - best for power users!_\n\n"
-            "💳 **Payment:** Anonymous Crypto (BTC/ETH/USDT)\n"
+            "💳 **Payment:** Anonymous Crypto (BTC/ETH/USDT/DOGE)\n"
             "⚡ **Delivery:** 2-10 minutes after confirmation\n\n"
             "_Select your package below:_"
         )
