@@ -11,7 +11,7 @@ import asyncio
 import aiohttp
 import hashlib
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, time as datetime_time
 from pathlib import Path
 
 # Load environment variables from config.env if exists
@@ -170,8 +170,14 @@ def require_channel_membership(func):
             return await func(update, context)
         
         try:
-            # 检查用户的频道成员状态
-            member = await context.bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user.id)
+            # 检查用户的频道成员状态（设置5秒超时）
+            member = await context.bot.get_chat_member(
+                chat_id=REQUIRED_CHANNEL,
+                user_id=user.id,
+                read_timeout=5,
+                write_timeout=5,
+                connect_timeout=5
+            )
             
             # ✅ 用户已关注频道：状态为 member、administrator 或 creator
             if member.status in ['member', 'administrator', 'creator']:
@@ -241,8 +247,14 @@ def require_channel_membership_callback(func):
             return await func(update, context)
         
         try:
-            # 检查用户的频道成员状态
-            member = await context.bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user.id)
+            # 检查用户的频道成员状态（设置5秒超时）
+            member = await context.bot.get_chat_member(
+                chat_id=REQUIRED_CHANNEL,
+                user_id=user.id,
+                read_timeout=5,
+                write_timeout=5,
+                connect_timeout=5
+            )
             
             # ✅ 用户已关注频道
             if member.status in ['member', 'administrator', 'creator']:
@@ -692,6 +704,9 @@ async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_id = hashlib.md5(result_url.encode()).hexdigest()[:16]
         context.bot_data[f"img_{image_id}"] = result_url
         
+        # 同时保存到数据库，防止内存丢失（bot重启或回调过期）
+        db.save_generated_image(image_id, user.id, result_url, full_prompt)
+        
         # Create inline button for video generation
         keyboard = [
             [InlineKeyboardButton(f"🔥 ANIMATE HER NOW! ({COST_VIDEO} Credits)", callback_data=f"video:{image_id}")]
@@ -730,7 +745,10 @@ async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             photo=image_data,
                             caption=caption,
                             reply_markup=reply_markup,
-                            parse_mode='Markdown'
+                            parse_mode='Markdown',
+                            read_timeout=30,
+                            write_timeout=30,
+                            connect_timeout=10
                         )
                     else:
                         raise Exception(f"Failed to download image: {img_response.status}")
@@ -757,7 +775,12 @@ async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
     
-    await query.answer()  # Acknowledge the button click
+    # 尝试确认回调，如果过期则忽略错误
+    try:
+        await query.answer()  # Acknowledge the button click
+    except Exception as e:
+        # 回调可能已过期（超过2分钟），但仍可继续处理
+        logger.warning(f"⚠️ Callback answer failed (likely expired): {e}")
     
     # Parse callback data
     callback_data = query.data
@@ -767,11 +790,22 @@ async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     image_id = callback_data[6:]  # Remove "video:" prefix
     
-    # Retrieve image URL from context
+    # Retrieve image URL from context (memory) or database
     image_url = context.bot_data.get(f"img_{image_id}")
+    
+    # 如果内存中没有，从数据库查找（支持回调过期或bot重启后仍可使用）
     if not image_url:
-        await query.message.reply_text("❌ Image not found. Please generate a new image with /roll")
-        return
+        image_data = db.get_generated_image(image_id)
+        if image_data:
+            image_url = image_data['image_url']
+            logger.info(f"📂 Retrieved image {image_id} from database for user {user.id}")
+        else:
+            await query.message.reply_text(
+                "❌ Image expired or not found.\n\n"
+                "🎲 Please generate a new image with /roll\n"
+                "💡 Tip: Images are saved for 7 days!"
+            )
+            return
     
     # Check credits
     credits = db.get_credits(user.id)
@@ -877,7 +911,10 @@ async def video_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await query.message.reply_video(
                             video=video_data,
                             caption=caption,
-                            parse_mode='Markdown'
+                            parse_mode='Markdown',
+                            read_timeout=60,
+                            write_timeout=60,
+                            connect_timeout=10
                         )
                     else:
                         raise Exception(f"Failed to download video: {vid_response.status}")
@@ -2338,6 +2375,16 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def cleanup_old_images_job(context: ContextTypes.DEFAULT_TYPE):
+    """定时任务：清理超过14天的图片记录（仅数据库，不删除文件）"""
+    try:
+        deleted_count = db.cleanup_old_image_records(days=14)
+        if deleted_count > 0:
+            logger.info(f"🗑️ Daily cleanup: Removed {deleted_count} old image records")
+    except Exception as e:
+        logger.error(f"❌ Daily cleanup failed: {e}")
+
+
 async def post_init(application: Application):
     """Initialize bot commands menu after startup."""
     # Set bot commands for regular users
@@ -2445,6 +2492,17 @@ def main():
     
     # Error handler
     application.add_error_handler(error_handler)
+    
+    # 添加定时清理任务
+    job_queue = application.job_queue
+    if job_queue:
+        # 每天凌晨3点清理超过14天的图片记录
+        job_queue.run_daily(
+            cleanup_old_images_job,
+            time=datetime_time(hour=3, minute=0, second=0),
+            name="cleanup_old_images"
+        )
+        logger.info("📅 Scheduled daily cleanup job at 03:00")
     
     # Start bot
     # logger.info("Bot started! Press Ctrl+C to stop.")

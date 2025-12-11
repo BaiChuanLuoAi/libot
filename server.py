@@ -24,6 +24,10 @@ from flask import Flask, request, jsonify, send_from_directory, Response, stream
 from flask_cors import CORS
 from dotenv import load_dotenv
 
+# 禁用 SSL 证书验证警告（视频端点证书已过期）
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # 加载环境变量
 load_dotenv()
 
@@ -534,7 +538,7 @@ def upload_image_to_comfyui(image_data_bytes, filename):
             'image': (filename, image_data_bytes, 'image/png')
         }
         
-        response = requests.post(url, files=files, timeout=60)
+        response = requests.post(url, files=files, timeout=60, verify=False)
         response.raise_for_status()
         
         result = response.json()
@@ -562,7 +566,8 @@ def submit_video_to_comfyui(workflow):
         response = requests.post(
             url,
             json=prompt_data,
-            timeout=120
+            timeout=120,
+            verify=False
         )
         print(f"  → HTTP状态: {response.status_code}")
         
@@ -597,7 +602,7 @@ def check_comfyui_video_status(prompt_id):
     """检查ComfyUI视频生成状态"""
     try:
         url = f"{COMFYUI_VIDEO_API_URL}/history/{prompt_id}"
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, timeout=30, verify=False)
         
         if response.status_code != 200:
             print(f"⚠️ ComfyUI history API 返回状态码: {response.status_code}")
@@ -742,7 +747,7 @@ def get_comfyui_video(filename, subfolder=""):
         
         print(f"  → 下载视频: {url}")
         
-        response = requests.get(url, timeout=120)
+        response = requests.get(url, timeout=120, verify=False)
         response.raise_for_status()
         
         return response.content

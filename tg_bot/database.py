@@ -75,6 +75,17 @@ class Database:
                 )
             """)
             
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS generated_images (
+                    image_id TEXT PRIMARY KEY,
+                    user_id INTEGER,
+                    image_url TEXT NOT NULL,
+                    prompt TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            """)
+            
             # Perform schema migrations
             self._migrate_schema(cursor)
             
@@ -491,4 +502,65 @@ class Database:
                 logger.info("Created payments view")
         except Exception as e:
             logger.error(f"Error creating payments view: {e}")
+    
+    def save_generated_image(self, image_id: str, user_id: int, image_url: str, prompt: str = None):
+        """保存生成的图片信息到数据库"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO generated_images (image_id, user_id, image_url, prompt)
+                    VALUES (?, ?, ?, ?)
+                """, (image_id, user_id, image_url, prompt))
+                logger.info(f"Saved image {image_id} for user {user_id}")
+        except Exception as e:
+            logger.error(f"Error saving generated image: {e}")
+    
+    def get_generated_image(self, image_id: str) -> Optional[dict]:
+        """从数据库获取图片信息"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT image_id, user_id, image_url, prompt, created_at
+                    FROM generated_images
+                    WHERE image_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (image_id,))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'image_id': row[0],
+                        'user_id': row[1],
+                        'image_url': row[2],
+                        'prompt': row[3],
+                        'created_at': row[4]
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Error getting generated image: {e}")
+            return None
+    
+    def cleanup_old_image_records(self, days: int = 14) -> int:
+        """清理超过指定天数的图片记录（仅删除数据库记录，不删除文件）"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # 删除数据库记录
+                cursor.execute("""
+                    DELETE FROM generated_images
+                    WHERE created_at < datetime('now', '-' || ? || ' days')
+                """, (days,))
+                deleted_count = cursor.rowcount
+                
+                if deleted_count > 0:
+                    logger.info(f"🗑️ Cleaned up {deleted_count} old image records (>{days} days)")
+                
+                return deleted_count
+        except Exception as e:
+            logger.error(f"Error cleaning up old image records: {e}")
+            return 0
 
+ 
